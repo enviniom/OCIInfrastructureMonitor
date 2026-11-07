@@ -7,11 +7,12 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 ## Estado
 
 - **Implementación:** no iniciada.
-- **Repositorio:** existen `go.mod` (`go 1.27.3`) y `Roadmap.md`; no hay código, `README.md` ni repositorio git inicializado.
+- **Repositorio:** existen `go.mod` (`go 1.27.3`) y `Roadmap.md`; git inicializado con el commit de documentación; aún no hay código ni `README.md`.
 - [x] Roadmap dividido en 5 hitos autocontenidos (2026-11-07).
 - [x] Índice de hitos con casillas de seguimiento.
 - [x] Plantillas [`progress.md`](progress.md) y [`decisions.md`](decisions.md) creadas.
 - [x] Contratos iniciales de diseño cerrados con el autor del roadmap (2026-11-07).
+- [x] Hito 1A: investigación de OCI Monitoring y permisos documentada (2026-11-07). Ver [`architecture.md`](architecture.md) y [`oci-permissions.md`](oci-permissions.md).
 
 ## Cómo se usa este índice
 
@@ -85,11 +86,12 @@ Hito 1 → Hito 2 → Hito 3 → Hito 4 → Hito 5
 | [`index.md`](index.md) | Este índice: estado resumido y enlaces. |
 | [`progress.md`](progress.md) | Traspaso entre sesiones: qué se hizo, qué falta y evidencia real. |
 | [`decisions.md`](decisions.md) | Reglas vigentes y porqués. Al cerrar el Hito 5 queda como lista corta de porqués. |
-| [`architecture.md`](architecture.md) | Fuente canónica del ciclo de `run` y, al cerrar el Hito 5, de las reglas vigentes. El Hito 1 completa la investigación de métricas. |
+| [`architecture.md`](architecture.md) | Fuente canónica del ciclo de `run` y de las reglas vigentes al cierre. La investigación del Hito 1A ya está documentada. |
+| [`oci-permissions.md`](oci-permissions.md) | Instance Principals, política restrictiva y verificación del Dynamic Group. |
 | [`hitos/`](hitos/) | Un archivo autocontenido por hito. |
 | [`../Roadmap.md`](../Roadmap.md) | Roadmap original, intacto hasta el cierre; antes de retirarlo se crea `git tag roadmap-final`. |
 
-Documentos que se crearán durante los hitos: `oci-permissions.md` (Hito 1); `deployment.md` y `troubleshooting.md` (Hito 5); `README.md` (Hito 5).
+Documentos que se crearán durante los hitos: `deployment.md` y `troubleshooting.md` (Hito 5); `README.md` (Hito 5).
 
 ## Contratos cerrados
 

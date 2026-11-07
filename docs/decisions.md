@@ -14,6 +14,12 @@
 - **Motivo:** si OCI omite ceros, una VNIC inactiva no tiene datapoints; marcarla incompleta para siempre sería un falso positivo. Pero una VNIC que nunca aparece puede ser un OCID mal escrito, y contar 0 en silencio sería peor.
 - **Consecuencias:** el estado guarda `last_visible`; los tests cubren los cuatro casos (con datos, omitiendo ceros, visible antes, nunca visible).
 
+## Ventana de publicación provisional
+
+- **Decisión:** los buckets cuya hora termina dentro de las últimas `publication_latency_hours` (2 por defecto, configurable) se marcan `provisional`. Pasado ese margen, la reconsulta de 48 h los vuelve a evaluar y los sobrescribe.
+- **Motivo:** OCI no publica una cifra de latencia para `oci_vcn`; 2 h es un margen conservador que evita dar por completos datos recientes.
+- **Consecuencias:** la cifra se medirá en producción y se ajustará; un `provisional` no se usa para conclusiones definitivas de anomalía.
+
 ## Umbrales, unidad y presentación
 
 - **Decisión:** `alert_percentages` sustituye a `warning_thresholds`. Debe haber exactamente 4 valores enteros, estrictamente crecientes, el primero mayor que 0 y el último igual a 100. La severidad se asigna por posición: informativa, advertencia, crítica y límite alcanzado. La unidad es siempre GiB (1 GiB = 2^30 bytes): `monthly_limit_gib` y `high_traffic_6h_gib`; se elimina la opción de GB decimales. La comparación usa bytes exactos; el porcentaje mostrado se trunca a un decimal, no se redondea, para que un 89,96 % no se muestre como “90 %” sin haber disparado la alerta crítica.
