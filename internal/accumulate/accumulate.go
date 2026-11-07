@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/enviniom/OCIInfrastructureMonitor/internal/config"
 	"github.com/enviniom/OCIInfrastructureMonitor/internal/persistence"
 )
 
@@ -39,6 +40,22 @@ type Options struct {
 	VNICIDs []string
 	// CollectInbound enables VnicFromNetworkBytes buckets.
 	CollectInbound bool
+}
+
+// OptionsFromConfig maps the configuration to the accumulation options. The
+// PublishZeros policy is deliberately not user-configurable: it stays false
+// until the empirical validation confirms whether oci_vcn publishes explicit
+// zero datapoints. The app, status and alerts packages share this mapping so
+// they summarize a month exactly the same way.
+func OptionsFromConfig(cfg config.Config) Options {
+	return Options{
+		RequeryWindow:      time.Duration(cfg.Network.RequeryWindowHours) * time.Hour,
+		PublicationLatency: time.Duration(cfg.Network.PublicationLatencyHours) * time.Hour,
+		NoDataStreak:       time.Duration(cfg.Network.NoDataStreakHours) * time.Hour,
+		Retention:          DefaultRetention,
+		VNICIDs:            cfg.Network.VNICOCIDs,
+		CollectInbound:     cfg.Network.CollectInbound,
+	}
 }
 
 func (o Options) requeryWindow() time.Duration {

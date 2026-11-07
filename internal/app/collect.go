@@ -257,12 +257,5 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 // that oci_vcn publishes explicit zero datapoints; the conservative reading is
 // that OCI omits them, so a no_data streak does not invalidate the total.
 func optionsFromConfig(cfg config.Config) accumulate.Options {
-	return accumulate.Options{
-		RequeryWindow:      time.Duration(cfg.Network.RequeryWindowHours) * time.Hour,
-		PublicationLatency: time.Duration(cfg.Network.PublicationLatencyHours) * time.Hour,
-		NoDataStreak:       time.Duration(cfg.Network.NoDataStreakHours) * time.Hour,
-		Retention:          accumulate.DefaultRetention,
-		VNICIDs:            cfg.Network.VNICOCIDs,
-		CollectInbound:     cfg.Network.CollectInbound,
-	}
+	return accumulate.OptionsFromConfig(cfg)
 }

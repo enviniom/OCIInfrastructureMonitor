@@ -38,6 +38,7 @@ type Network struct {
 	MonthlyLimitGiB                float64  `json:"monthly_limit_gib"`
 	AlertPercentages               []int    `json:"alert_percentages"`
 	HighTraffic6HGiB               float64  `json:"high_traffic_6h_gib"`
+	HighTrafficCooldownHours       int      `json:"high_traffic_cooldown_hours"`
 	RequeryWindowHours             int      `json:"requery_window_hours"`
 	PublicationLatencyHours        int      `json:"publication_latency_hours"`
 	NoDataStreakHours              int      `json:"no_data_streak_hours"`
@@ -70,6 +71,7 @@ func Default() Config {
 		Network: Network{
 			Enabled:                        true,
 			AlertPercentages:               []int{50, 75, 90, 100},
+			HighTrafficCooldownHours:       24,
 			RequeryWindowHours:             48,
 			PublicationLatencyHours:        2,
 			NoDataStreakHours:              6,
@@ -156,6 +158,9 @@ func (c Config) Validate() error {
 
 	if c.Network.RequeryWindowHours < 1 {
 		add("network.requery_window_hours must be at least 1")
+	}
+	if c.Network.HighTrafficCooldownHours < 1 {
+		add("network.high_traffic_cooldown_hours must be at least 1")
 	}
 	if c.Network.PublicationLatencyHours < 1 {
 		add("network.publication_latency_hours must be at least 1")

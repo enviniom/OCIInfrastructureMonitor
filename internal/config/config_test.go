@@ -43,6 +43,9 @@ func TestParseDefaults(t *testing.T) {
 	if cfg.Network.PublicationLatencyHours != 2 {
 		t.Errorf("publication latency default = %d, want 2", cfg.Network.PublicationLatencyHours)
 	}
+	if cfg.Network.HighTrafficCooldownHours != 24 {
+		t.Errorf("high traffic cooldown default = %d, want 24", cfg.Network.HighTrafficCooldownHours)
+	}
 	if got := cfg.Network.AlertPercentages; len(got) != 4 || got[3] != 100 {
 		t.Errorf("alert percentages default = %v, want [50 75 90 100]", got)
 	}
@@ -114,6 +117,14 @@ func TestInvalidAlertPercentages(t *testing.T) {
 				t.Fatalf("Validate() accepted %v", tc.values)
 			}
 		})
+	}
+}
+
+func TestInvalidHighTrafficCooldown(t *testing.T) {
+	cfg := validConfig()
+	cfg.Network.HighTrafficCooldownHours = 0
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "high_traffic_cooldown_hours") {
+		t.Fatalf("Validate() error = %v, want high_traffic_cooldown_hours", err)
 	}
 }
 

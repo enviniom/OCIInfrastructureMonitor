@@ -13,6 +13,7 @@
     "monthly_limit_gib": 10240,
     "alert_percentages": [50, 75, 90, 100],
     "high_traffic_6h_gib": 100,
+    "high_traffic_cooldown_hours": 24,
     "requery_window_hours": 48,
     "publication_latency_hours": 2,
     "no_data_streak_hours": 6,
