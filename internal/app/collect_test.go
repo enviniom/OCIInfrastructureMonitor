@@ -555,6 +555,11 @@ func TestCollectWarnsWhenVNICDisappears(t *testing.T) {
 	if summary.Outbound.Bytes != 157000 {
 		t.Errorf("bytes = %d, want 157000", summary.Outbound.Bytes)
 	}
+	for _, bucket := range history.Buckets {
+		if bucket.ResourceID == cfg.Network.VNICOCIDs[0] && bucket.Status == persistence.StatusIncomplete {
+			t.Errorf("a confirmed bucket of the disappeared VNIC was marked incomplete: %+v", bucket)
+		}
+	}
 }
 
 func TestCollectCorruptStateFails(t *testing.T) {

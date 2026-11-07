@@ -12,6 +12,10 @@ import (
 	"github.com/enviniom/OCIInfrastructureMonitor/internal/persistence"
 )
 
+// DefaultQueryTimeout bounds one OCI Monitoring request. The run command sets a
+// smaller value when its remaining deadline is shorter.
+const DefaultQueryTimeout = 30 * time.Second
+
 // CollectOptions controls one collection pass.
 type CollectOptions struct {
 	// Now is the reference instant; zero means time.Now().
@@ -21,6 +25,9 @@ type CollectOptions struct {
 	// Logf receives human-readable messages, such as the discarded
 	// corrections of a finalized month. It may be nil.
 	Logf func(format string, args ...any)
+	// QueryTimeout bounds each individual OCI query. Zero means
+	// DefaultQueryTimeout.
+	QueryTimeout time.Duration
 }
 
 // QueryFailure is one failed OCI query. A failure never aborts the run.
@@ -32,17 +39,33 @@ type QueryFailure struct {
 // CollectReport is the outcome of one collection pass. It carries data instead
 // of logging so the caller decides the log level and the exit code.
 type CollectReport struct {
-	Now             time.Time
-	DryRun          bool
-	Queries         int
-	Succeeded       int
-	Failures        []QueryFailure
+	Now       time.Time
+	DryRun    bool
+	Queries   int
+	Succeeded int
+	Failures  []QueryFailure
+	// NeverVisible lists the configured VNICs that have never produced a
+	// datapoint in any successful query. A VNIC that was visible before and
+	// stopped appearing is reported in Warnings instead and does not count as
+	// a collection failure.
+	NeverVisible    []string
 	GapsFilled      int
 	Finalized       []string
 	Corrections     map[string]accumulate.CorrectionStats
 	LateCorrections map[string]accumulate.CorrectionStats
 	Summaries       map[string]accumulate.Summary
 	Warnings        []string
+}
+
+// collectResult is the in-memory outcome the run command needs after the
+// collection, before it decides when to persist state.json.
+type collectResult struct {
+	report       CollectReport
+	state        persistence.State
+	histories    map[string]*persistence.History
+	months       []string
+	finalizedNow map[string]bool
+	options      accumulate.Options
 }
 
 // Collect implements steps 5 to 8 of the run cycle: plan the requery window,
@@ -55,33 +78,55 @@ type CollectReport struct {
 // error: a failing VNIC never aborts the pass. The error return is reserved for
 // persistence problems.
 func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *persistence.Store, options CollectOptions) (CollectReport, error) {
+	result, err := collectInternal(ctx, cfg, client, store, options)
+	if err != nil {
+		return result.report, err
+	}
+	if options.DryRun || !cfg.Network.Enabled {
+		return result.report, nil
+	}
+	if err := saveCollected(store, result); err != nil {
+		return result.report, err
+	}
+	return result.report, nil
+}
+
+// collectInternal performs the collection without persisting anything. It is
+// shared by Collect and Run: the run command persists the histories in step 7
+// and the state only after each successful delivery (or at the end when there
+// was nothing to send).
+func collectInternal(ctx context.Context, cfg config.Config, client oci.Client, store *persistence.Store, options CollectOptions) (collectResult, error) {
 	now := options.Now
 	if now.IsZero() {
 		now = time.Now()
 	}
 	now = now.UTC()
 
-	report := CollectReport{
-		Now:             now,
-		DryRun:          options.DryRun,
-		Corrections:     map[string]accumulate.CorrectionStats{},
-		LateCorrections: map[string]accumulate.CorrectionStats{},
-		Summaries:       map[string]accumulate.Summary{},
+	result := collectResult{
+		report: CollectReport{
+			Now:             now,
+			DryRun:          options.DryRun,
+			Corrections:     map[string]accumulate.CorrectionStats{},
+			LateCorrections: map[string]accumulate.CorrectionStats{},
+			Summaries:       map[string]accumulate.Summary{},
+		},
+		finalizedNow: map[string]bool{},
 	}
+	result.state = persistence.NewState()
 
 	if !cfg.Network.Enabled {
 		// network.enabled=false exits 0 without querying OCI or touching state.
-		return report, nil
+		return result, nil
 	}
 	if client == nil {
-		return report, errors.New("oci client is nil")
+		return result, errors.New("oci client is nil")
 	}
 	if store == nil {
-		return report, errors.New("state store is nil")
+		return result, errors.New("state store is nil")
 	}
 	if !options.DryRun {
 		if err := store.Ensure(); err != nil {
-			return report, fmt.Errorf("prepare state directory: %w", err)
+			return result, fmt.Errorf("prepare state directory: %w", err)
 		}
 	}
 
@@ -89,20 +134,23 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 	loadOptions := persistence.LoadOptions{Quarantine: !options.DryRun}
 	state, err := store.LoadStateWith(loadOptions)
 	if err != nil {
-		return report, err
+		return result, err
 	}
+	result.state = state
 
 	opts := optionsFromConfig(cfg)
+	result.options = opts
 	historyMonths, err := store.ListMonths()
 	if err != nil {
-		return report, err
+		return result, err
 	}
 	months := accumulate.MonthsToConsider(now, state, opts, historyMonths)
+	result.months = months
 	histories := make(map[string]*persistence.History, len(months))
 	for _, month := range months {
 		history, _, err := store.LoadHistoryWith(month, loadOptions)
 		if err != nil {
-			return report, err
+			return result, err
 		}
 		histories[month] = history
 		if history.Finalized && !state.IsFinalized(month) {
@@ -110,6 +158,7 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 			state.MarkFinalized(month)
 		}
 	}
+	result.histories = histories
 
 	plan := accumulate.PlanMonths(now, opts, state, histories)
 
@@ -117,7 +166,7 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 		if len(monthPlan.Gaps) == 0 {
 			continue
 		}
-		report.GapsFilled += accumulate.ApplyGaps(histories[monthPlan.Month], monthPlan.Gaps, now)
+		result.report.GapsFilled += accumulate.ApplyGaps(histories[monthPlan.Month], monthPlan.Gaps, now)
 	}
 
 	type outcome struct {
@@ -129,10 +178,16 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 	observedVNICs := map[string]bool{}
 	dataHours := map[string][]time.Time{}
 
+	queryTimeout := options.QueryTimeout
+	if queryTimeout <= 0 {
+		queryTimeout = DefaultQueryTimeout
+	}
+
 	for _, monthPlan := range plan.Months {
 		for _, job := range monthPlan.Jobs {
-			report.Queries++
-			series, err := client.Summarize(ctx, oci.Query{
+			result.report.Queries++
+			queryCtx, cancel := context.WithTimeout(ctx, queryTimeout)
+			series, err := client.Summarize(queryCtx, oci.Query{
 				CompartmentID: cfg.Network.CompartmentOCID,
 				Namespace:     oci.Namespace,
 				MQL:           job.MQL(),
@@ -140,15 +195,16 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 				EndTime:       job.End,
 				Resolution:    "1h",
 			})
+			cancel()
 			if err != nil {
 				// A failing VNIC does not abort the run: its hours become
 				// incomplete and the rest of the VNICs still run.
-				report.Failures = append(report.Failures, QueryFailure{Job: job, Err: err})
+				result.report.Failures = append(result.report.Failures, QueryFailure{Job: job, Err: err})
 				failedMonths[job.Month] = true
 				accumulate.MarkJobFailed(histories[job.Month], job, now)
 				continue
 			}
-			report.Succeeded++
+			result.report.Succeeded++
 			observedVNICs[job.VNICID] = true
 			samples := accumulate.NormalizeSeries(series, job.Direction, job.Start, job.End)
 			for _, sample := range samples {
@@ -167,27 +223,33 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 		updated, warned := accumulate.UpdateVNIC(state.VNIC(vnic), dataHours[vnic], now)
 		state.SetVNIC(vnic, updated)
 		if warned {
-			report.Warnings = append(report.Warnings, vnic)
+			result.report.Warnings = append(result.report.Warnings, vnic)
+		}
+		if updated.FirstVisible == nil {
+			// The VNIC has never produced a datapoint. The roadmap treats it
+			// as a collection failure for the persistent-error alert because a
+			// wrong OCID cannot be told apart from an idle VNIC without extra
+			// network permissions.
+			result.report.NeverVisible = append(result.report.NeverVisible, vnic)
 		}
 	}
 
-	for _, result := range outcomes {
-		month := result.job.Month
-		reconciled := accumulate.Reconcile(histories[month], result.job, result.samples, now, opts, state.VNIC(result.job.VNICID))
+	for _, outcome := range outcomes {
+		month := outcome.job.Month
+		reconciled := accumulate.Reconcile(histories[month], outcome.job, outcome.samples, now, opts, state.VNIC(outcome.job.VNICID))
 		if reconciled.Corrections.Buckets > 0 {
-			stats := report.Corrections[month]
+			stats := result.report.Corrections[month]
 			stats.Add(reconciled.Corrections)
-			report.Corrections[month] = stats
+			result.report.Corrections[month] = stats
 			state.AddCorrections(month, reconciled.Corrections.Buckets, reconciled.Corrections.DeltaBytes, now)
 		}
 		if reconciled.LateCorrections.Buckets > 0 {
-			stats := report.LateCorrections[month]
+			stats := result.report.LateCorrections[month]
 			stats.Add(reconciled.LateCorrections)
-			report.LateCorrections[month] = stats
+			result.report.LateCorrections[month] = stats
 		}
 	}
 
-	finalizedNow := map[string]bool{}
 	for _, monthPlan := range plan.Months {
 		if !monthPlan.Due || failedMonths[monthPlan.Month] {
 			continue
@@ -198,44 +260,64 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 		}
 		if history.Finalize(now) {
 			state.MarkFinalized(monthPlan.Month)
-			report.Finalized = append(report.Finalized, monthPlan.Month)
-			finalizedNow[monthPlan.Month] = true
+			result.report.Finalized = append(result.report.Finalized, monthPlan.Month)
+			result.finalizedNow[monthPlan.Month] = true
 		}
 	}
 
-	if report.Queries > 0 {
-		if len(report.Failures) > 0 {
+	if result.report.Queries > 0 {
+		if len(result.report.Failures) > 0 || len(result.report.NeverVisible) > 0 {
 			state.ConsecutiveFailures++
 			state.LastFailure = &now
 		} else {
 			state.ConsecutiveFailures = 0
 		}
 	}
-	if report.Succeeded > 0 {
+	if result.report.Succeeded > 0 {
 		state.LastSuccessfulQuery = &now
 	}
 	state.LastRun = &now
+	result.state = state
 
 	for _, month := range months {
 		if !histories[month].HasData() {
 			continue
 		}
-		report.Summaries[month] = accumulate.Summarize(histories[month], opts)
+		result.report.Summaries[month] = accumulate.Summarize(histories[month], opts)
 	}
 
 	if options.Logf != nil {
-		for month, stats := range report.LateCorrections {
+		for month, stats := range result.report.LateCorrections {
 			options.Logf("mes %s: %d buckets corregidos tras el cierre; se descartan (%+d bytes)", month, stats.Buckets, stats.DeltaBytes)
 		}
 	}
 
-	if options.DryRun {
-		return report, nil
-	}
+	return result, nil
+}
 
-	for _, month := range months {
-		history := histories[month]
-		if history.Finalized && !finalizedNow[month] {
+// saveCollected writes the histories and then the state. Collect uses it; Run
+// only reuses the history half because it persists the state after each
+// successful delivery.
+func saveCollected(store *persistence.Store, result collectResult) error {
+	if err := saveCollectedHistories(store, result); err != nil {
+		return err
+	}
+	if err := store.SaveState(result.state); err != nil {
+		return err
+	}
+	return nil
+}
+
+// saveCollectedHistories performs step 7 of the run cycle: persist the history
+// of every month that has data or was finalized in this pass. Finalized files
+// that were already immutable on disk are not rewritten.
+func saveCollectedHistories(store *persistence.Store, result collectResult) error {
+	for _, month := range result.months {
+		history := result.histories[month]
+		if history == nil {
+			continue
+		}
+		if history.Finalized && !result.finalizedNow[month] {
 			// Already immutable on disk.
 			continue
 		}
@@ -243,13 +325,10 @@ func Collect(ctx context.Context, cfg config.Config, client oci.Client, store *p
 			continue
 		}
 		if err := store.SaveHistory(history); err != nil {
-			return report, err
+			return err
 		}
 	}
-	if err := store.SaveState(state); err != nil {
-		return report, err
-	}
-	return report, nil
+	return nil
 }
 
 // optionsFromConfig builds the accumulation options from the configuration.

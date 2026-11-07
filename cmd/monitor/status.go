@@ -94,7 +94,7 @@ func monthState(month app.MonthStatus) string {
 	case month.Finalized:
 		return "finalizado"
 	case month.Grace:
-		return "no finalizado, en gracia"
+		return "no finalizado (en gracia)"
 	case month.PendingFinalization:
 		return "no finalizado, pendiente de finalización"
 	default:

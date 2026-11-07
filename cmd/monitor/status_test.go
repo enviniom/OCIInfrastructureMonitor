@@ -100,7 +100,7 @@ func TestWriteStatus(t *testing.T) {
 		"saliente: 1,15 GiB (1.234.567.890 bytes)",
 		"acumulado: completo",
 		"buckets: 168 (complete 168, provisional 0, no_data 0, incomplete 0)",
-		"mes anterior: 2026-10 (no finalizado, en gracia)",
+		"mes anterior: 2026-10 (no finalizado (en gracia))",
 		"acumulado: incompleto (34 buckets incompletos)",
 		"correcciones durante la gracia: 2 buckets, -1.234 bytes",
 		"avisos:",
