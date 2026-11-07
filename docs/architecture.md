@@ -1,6 +1,6 @@
 # Arquitectura
 
-> Fuente canónica del ciclo de ejecución y, al cerrar el Hito 5, de las reglas vigentes. Las reglas y su porqué están en [`decisions.md`](decisions.md); las comprobaciones que faltan, en [`progress.md`](progress.md#validaciones-pendientes-del-hito-1).
+> Fuente canónica del ciclo de ejecución y de las reglas vigentes al cierre de la v1. Los porqués están en [`decisions.md`](decisions.md); la evidencia y las comprobaciones que faltan, en [`progress.md`](progress.md). Instalación y diagnóstico: [`deployment.md`](deployment.md) y [`troubleshooting.md`](troubleshooting.md).
 
 ## Alcance
 
@@ -195,6 +195,8 @@ Todos los archivos llevan `"schema_version": 3` desde el Hito 4. La lectura acep
 
 La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal (lo hace el evaluador del Hito 3).
 
+`test-telegram` lee el estado y el historial con la cuarentena desactivada: informa de un archivo corrupto pero no lo mueve. `status` y `run` (salvo `--dry-run`) aplican la cuarentena documentada; `status` sale `4` si la encuentra.
+
 ## Alertas (Hito 3)
 
 `internal/alerts` evalúa los buckets persistidos y propone notificaciones. Los evaluadores son funciones puras sobre `Input{Now, Config, State, Histories}`: no consultan OCI, no envían por Telegram y no escriben estado. `Evaluate` recorre una lista de `Evaluator`; hoy son `MonthlyThresholds` y `Anomaly6H`, y un evaluador nuevo (por ejemplo, una línea base histórica) se añade sin tocar los existentes.
@@ -245,7 +247,7 @@ La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal (lo 
 ### Escritura, `--dry-run` y transición de Telegram
 
 - `state.json` se persiste después de cada envío correcto y en el paso 12, no solo al final.
-- `--dry-run` ejecuta las lecturas y los cálculos, pero no escribe estado ni historial, no mueve archivos corruptos, no encola, no envía y no marca nada. El `flock` se adquiere igualmente, así que el directorio de estado y el archivo `lock` pueden crearse; `state.json`, `history/` y los `*.corrupt-*` no se tocan. La simulación cuenta en memoria la cola que se vaciaría y las alertas nuevas (`WouldSend`), pero no persiste esa cola. Los códigos de configuración, persistencia y OCI se conservan; no puede devolver `5` porque no envía.
+- `--dry-run` ejecuta las lecturas y los cálculos, pero no escribe estado ni historial, no mueve archivos corruptos, no encola, no envía y no marca nada. El `flock` se adquiere igualmente, así que el directorio de estado, `history/` y el archivo `lock` pueden crearse; `state.json`, los archivos de historial y los `*.corrupt-*` no se tocan. La simulación cuenta en memoria la cola que se vaciaría y las alertas nuevas (`WouldSend`), pero no persiste esa cola. Los códigos de configuración, persistencia y OCI se conservan; no puede devolver `5` porque no envía.
 - `network.enabled=false` toma el lock y sale `0` sin consultar OCI ni escribir estado; los pendientes esperan a que se reactive.
 - `telegram.enabled=false` aplica la caducidad de 7 días, evalúa y registra en log y `status`, pero no encola, no envía pendientes y no marca como enviado. Al reactivarlo se descartan las alertas mensuales pendientes y se emite una sola con el nivel actual; las de anomalía y de recopilación conservan su semántica. `state.telegram_enabled` recuerda el valor anterior para detectar la transición.
 
@@ -259,7 +261,88 @@ La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal (lo 
 ### Códigos de salida y deadline
 
 - Prioridad `2` configuración > `4` persistencia > `3` OCI > `5` Telegram. `6` concurrencia se devuelve solo, antes de leer estado. Todos los errores quedan en log.
-- Deadline global de 4 min, con los últimos 10 s reservados para persistir; 30 s por consulta OCI y 45 s por mensaje, siempre recortados por el tiempo restante. `TimeoutStartSec` de 5 min en systemd es del Hito 5.
+- Deadline global de 4 min, con los últimos 10 s reservados para persistir; 30 s por consulta OCI y 45 s por mensaje, siempre recortados por el tiempo restante.
+- La unidad systemd fija `TimeoutStartSec=5min`, por encima del deadline interno, para no matar el proceso entre una respuesta de Telegram y la escritura del estado. Ver [systemd, compilación y operación](#systemd-compilación-y-operación-hito-5).
+
+## systemd, compilación y operación (Hito 5)
+
+### Rutas de la instalación
+
+```text
+/usr/local/bin/oci-infrastructure-monitor          # 0755 root:root, binario estático
+/etc/oci-infrastructure-monitor/
+├── config.json                                    # 0640 root:oci-monitor
+└── telegram.env                                   # 0600 oci-monitor:oci-monitor
+/var/lib/oci-infrastructure-monitor/               # 0700 oci-monitor:oci-monitor
+├── state.json                                     # 0600
+├── lock                                           # 0600
+└── history/YYYY-MM.json                           # 0600
+/etc/systemd/system/oci-infrastructure-monitor.{service,timer}
+```
+
+El binario es estático (`CGO_ENABLED=0`), así que no depende de glibc ni de tener Go instalado en el servidor. La configuración y el estado son las únicas rutas que necesitan permisos especiales; el detalle de SELinux y de la instalación está en [`deployment.md`](deployment.md).
+
+### Service
+
+`systemd/oci-infrastructure-monitor.service`:
+
+| Directiva | Valor | Efecto |
+|---|---|---|
+| `Type` | `oneshot` | Una ejecución por disparo; el timer decide cuándo |
+| `User` / `Group` | `oci-monitor` | Sin privilegios; el binario nunca corre como root |
+| `EnvironmentFile` | `-/etc/oci-infrastructure-monitor/telegram.env` | Credenciales en el entorno, fuera de `ExecStart`; opcional para poder arrancar con Telegram deshabilitado |
+| `ExecStart` | `run --config … --telegram-env …` | Ciclo completo de 13 pasos |
+| `StateDirectory` | `oci-infrastructure-monitor` | Crea `/var/lib/oci-infrastructure-monitor` con `0700` y la hace escribible bajo `ProtectSystem=strict` |
+| `StandardOutput` / `StandardError` | `journal` | Logs a journald con `SyslogIdentifier=oci-infrastructure-monitor` |
+| `TimeoutStartSec` | `5min` | Margen sobre el deadline interno de 4 min |
+| `TimeoutStopSec` | `20s` | Espera tras `SIGTERM` antes de `SIGKILL`. Una parada puede cortar la ejecución; la escritura atómica evita dejar JSON a medias, no que la ejecución termine |
+
+Endurecimiento: `NoNewPrivileges=yes`, `ProtectSystem=strict`, `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`, `ProtectKernelTunables/Modules/Logs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`, `MemoryDenyWriteExecute`, `SystemCallArchitectures=native`, `SystemCallFilter=@system-service`, `CapabilityBoundingSet=` vacío, `UMask=0077` y `RemoveIPC=yes`.
+
+**Restricción deliberada:** no se usan `PrivateNetwork` ni `IPAddressDeny`. La aplicación necesita `169.254.169.254` para Instance Principals, los endpoints de OCI Monitoring y `api.telegram.org`. Cualquier endurecimiento futuro que filtre red debe incluir excepciones documentadas para esos destinos. `systemd-analyze security --offline` califica la unidad con exposición `1.6 OK` en la revisión local.
+
+El `service` no tiene sección `[Install]`: solo se habilita el `timer`. Así se evita que `systemctl enable` sobre el servicio lo arranque en cada boot por error.
+
+### Timer
+
+`systemd/oci-infrastructure-monitor.timer`:
+
+- `OnCalendar=*-*-* 00/6:00:00`: 00:00, 06:00, 12:00 y 18:00 de la hora local del servidor. Los buckets se guardan siempre en UTC.
+- `RandomizedDelaySec=15min`: reparte la carga y evita que varias instancias consulten OCI en el mismo minuto.
+- `AccuracySec=1min`.
+- `Persistent=true`: si el servidor estaba apagado en el disparo, la ejecución se recupera al arrancar.
+- `Unit=oci-infrastructure-monitor.service`, `WantedBy=timers.target`.
+
+### Compilación y artefactos
+
+```bash
+VERSION=1.0.0
+COMMIT=$(git rev-parse --short HEAD)
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
+  -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$DATE" \
+  -o dist/oci-infrastructure-monitor-linux-arm64 ./cmd/monitor
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+  -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$DATE" \
+  -o dist/oci-infrastructure-monitor-linux-amd64 ./cmd/monitor
+
+sha256sum dist/oci-infrastructure-monitor-linux-* > dist/SHA256SUMS
+sha256sum -c dist/SHA256SUMS
+```
+
+- `-trimpath` evita rutas de la máquina de compilación en el binario.
+- `-s -w` elimina información de depuración; el binario sigue siendo localizable con `version`.
+- `-X main.version/commit/buildDate` alimenta el comando `version`.
+- `dist/` está en `.gitignore`: los binarios son artefactos de entrega, no código versionado.
+
+### Operación y códigos
+
+- `systemctl enable --now oci-infrastructure-monitor.timer` habilita solo el timer.
+- `systemctl start oci-infrastructure-monitor.service` fuerza una ejecución manual; el `flock` evita el solapamiento con el timer.
+- `systemctl list-timers oci-infrastructure-monitor.timer` y `journalctl -u oci-infrastructure-monitor.service` son las dos comprobaciones básicas.
+- Cualquier código distinto de `0` deja la unidad en `failed`; el timer vuelve a intentarlo en la siguiente ventana. `6` (concurrencia) no es un fallo de datos.
+- Un fallo de Telegram (`5`) no impide guardar el estado: la notificación queda en cola y se reintenta.
 
 ## IAM y compartimentos
 
@@ -291,6 +374,9 @@ Allow dynamic-group 'Default'/'BackupInstances' to read metrics in compartment <
 - La ventana de actividad de `ListMetrics` no está documentada; no se usa para afirmar existencia.
 - El tráfico registrado por VNIC no equivale al facturable; la aplicación lo advierte en README y alertas.
 - La v1 asume que todas las VNIC configuradas están en el mismo compartimento de subred (`network.compartment_ocid`). Si alguna está en otro compartimento, la consulta no la verá; una versión futura puede mapear compartimento por VNIC.
+- El endurecimiento de systemd se revisó con `systemd-analyze verify` y `systemd-analyze security --offline`, pero no se ejecutó en el servidor real. Una syscall fuera de `@system-service` o una dependencia futura que necesite memoria ejecutable daría `operation not permitted`; el diagnóstico está en [`troubleshooting.md`](troubleshooting.md).
+- El binario `linux/arm64` se verificó con `file` y `sha256sum`, pero no se ejecutó en un host ARM64 desde el entorno de desarrollo. El binario `amd64` sí ejecutó `version` localmente.
+- Los contextos SELinux, los permisos efectivos del usuario `oci-monitor` y el timer real no se validaron en el servidor; quedan en [`progress.md`](progress.md).
 
 ## Referencias
 

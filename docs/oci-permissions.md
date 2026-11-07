@@ -47,7 +47,7 @@ La documentación de `ListMetrics` no publica una ventana de actividad: lista de
 
 ## Verificación manual del Dynamic Group
 
-Desde una máquina con OCI CLI y permisos de Identity (no desde la instancia, que no tiene OCI CLI):
+Desde una máquina con OCI CLI y permisos de Identity (no desde la instancia, que no tiene OCI CLI). El ejemplo usa `jq`; si no está, instálalo con `sudo dnf install -y jq` o usa `python3` para leer el JSON:
 
 ```bash
 oci iam dynamic-group list --compartment-id <tenancy_ocid>
