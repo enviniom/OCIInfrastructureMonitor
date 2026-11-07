@@ -11,8 +11,15 @@ import (
 )
 
 // CurrentSchemaVersion is the version written to every state and history file.
-// A file with any other version is rejected without being overwritten.
-const CurrentSchemaVersion = 1
+// A file with a version this binary does not understand is rejected without
+// being overwritten.
+const CurrentSchemaVersion = 2
+
+// OldestSupportedSchemaVersion is the oldest version this binary can read. A
+// version 1 file (the Hito 2 schema) is migrated in memory and rewritten as
+// version 2 on the next successful save; a version 1 finalized history is read
+// as is and never rewritten.
+const OldestSupportedSchemaVersion = 1
 
 // MonthLayout formats month identifiers, which are also history file names.
 const MonthLayout = "2006-01"
@@ -278,10 +285,19 @@ type MonthCorrections struct {
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
-// AlertState holds the alert bookkeeping. The Hito 2 only persists the field.
+// AlertState holds the alert bookkeeping.
 // MonthlyAlerts maps a month ("YYYY-MM") to the thresholds already notified.
 type AlertState struct {
 	MonthlyAlerts map[string][]int `json:"monthly_alerts,omitempty"`
+	Anomaly6H     *Anomaly6HState  `json:"anomaly_6h,omitempty"`
+}
+
+// Anomaly6HState is the bookkeeping of the abnormal-consumption alert over the
+// last six complete hours. LastNotifiedAt is set only after a successful
+// delivery, so the cooldown is measured from an alert that actually left the
+// system.
+type Anomaly6HState struct {
+	LastNotifiedAt *time.Time `json:"last_notified_at,omitempty"`
 }
 
 // State is the content of state.json.
@@ -402,6 +418,9 @@ func (s State) Validate() error {
 				return fmt.Errorf("state: invalid alerted percentage %d for %s", level, month)
 			}
 		}
+	}
+	if s.Alerts.Anomaly6H != nil && s.Alerts.Anomaly6H.LastNotifiedAt != nil && s.Alerts.Anomaly6H.LastNotifiedAt.IsZero() {
+		return errors.New("state: anomaly_6h last_notified_at is the zero time")
 	}
 	for id, v := range s.VNICs {
 		if id == "" {

@@ -180,7 +180,7 @@ func (s *Store) LoadStateWith(options LoadOptions) (State, error) {
 	if err != nil {
 		return State{}, s.corrupt(path, fmt.Errorf("decode state: %w", err), options)
 	}
-	if version != CurrentSchemaVersion {
+	if !SupportedSchemaVersion(version) {
 		return State{}, &SchemaVersionError{Path: path, Got: version}
 	}
 
@@ -189,6 +189,9 @@ func (s *Store) LoadStateWith(options LoadOptions) (State, error) {
 		return State{}, s.corrupt(path, fmt.Errorf("decode state: %w", err), options)
 	}
 	state.ensureMaps()
+	// A version 1 state (Hito 2) only lacks alerts.anomaly_6h: migrate it in
+	// memory and let the next successful save write version 2.
+	state.SchemaVersion = CurrentSchemaVersion
 	if err := state.Validate(); err != nil {
 		return State{}, s.corrupt(path, err, options)
 	}
@@ -243,7 +246,7 @@ func (s *Store) LoadHistoryWith(month string, options LoadOptions) (*History, bo
 	if err != nil {
 		return nil, false, s.corrupt(path, fmt.Errorf("decode history %s: %w", month, err), options)
 	}
-	if version != CurrentSchemaVersion {
+	if !SupportedSchemaVersion(version) {
 		return nil, false, &SchemaVersionError{Path: path, Got: version}
 	}
 
@@ -255,6 +258,10 @@ func (s *Store) LoadHistoryWith(month string, options LoadOptions) (*History, bo
 		return nil, false, s.corrupt(path, fmt.Errorf("history %s: file declares month %q", month, history.Month), options)
 	}
 	history.ensureIndex()
+	// A version 1 history has exactly the same fields as version 2; only the
+	// header changes. A finalized version 1 file is read as version 2 and is
+	// never rewritten because finalized histories are immutable.
+	history.SchemaVersion = CurrentSchemaVersion
 	if err := history.Validate(); err != nil {
 		return nil, false, s.corrupt(path, err, options)
 	}
@@ -306,9 +313,10 @@ func (s *Store) checkStateWritable() error {
 	if err != nil {
 		return &CorruptionError{Path: path, Err: fmt.Errorf("refusing to overwrite: %w", err)}
 	}
-	if version != CurrentSchemaVersion {
+	if !SupportedSchemaVersion(version) {
 		return &SchemaVersionError{Path: path, Got: version}
 	}
+	// A supported older version is upgraded by this save.
 	return nil
 }
 
@@ -328,7 +336,7 @@ func (s *Store) checkHistoryWritable(path, month string) error {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return &CorruptionError{Path: path, Err: fmt.Errorf("refusing to overwrite: %w", err)}
 	}
-	if header.SchemaVersion != CurrentSchemaVersion {
+	if !SupportedSchemaVersion(header.SchemaVersion) {
 		return &SchemaVersionError{Path: path, Got: header.SchemaVersion}
 	}
 	if header.Finalized {
@@ -372,6 +380,13 @@ func nextCorruptName(path string) (string, error) {
 		}
 		candidate = fmt.Sprintf("%s-%d", base, i)
 	}
+}
+
+// SupportedSchemaVersion reports whether version can be read by this binary.
+// Older supported versions are migrated in memory and rewritten at the current
+// version; unknown versions are rejected without touching the file.
+func SupportedSchemaVersion(version int) bool {
+	return version >= OldestSupportedSchemaVersion && version <= CurrentSchemaVersion
 }
 
 func peekSchema(data []byte) (int, error) {

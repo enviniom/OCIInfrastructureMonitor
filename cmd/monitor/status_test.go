@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ func statusReport() app.StatusReport {
 		StateDir:    "/var/lib/oci-infrastructure-monitor",
 		StateExists: true,
 		State: persistence.State{
-			SchemaVersion:       1,
+			SchemaVersion:       persistence.CurrentSchemaVersion,
 			LastRun:             &lastRun,
 			LastSuccessfulQuery: &lastRun,
 			Pending:             []persistence.Notification{{Kind: persistence.NotificationMonthlyThreshold, CreatedAt: lastRun}},
@@ -92,7 +93,7 @@ func TestWriteStatus(t *testing.T) {
 	wants := []string{
 		"oci-infrastructure-monitor — estado",
 		"directorio: /var/lib/oci-infrastructure-monitor",
-		"esquema: 1",
+		fmt.Sprintf("esquema: %d", persistence.CurrentSchemaVersion),
 		"última ejecución: 2026-11-07 13:30:00 UTC",
 		"notificaciones pendientes: 1",
 		"mes actual: 2026-11 (abierto)",

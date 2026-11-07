@@ -189,7 +189,7 @@ func TestLoadHistoryReadOnlyDoesNotQuarantine(t *testing.T) {
 
 func TestUnknownSchemaStateIsPreserved(t *testing.T) {
 	store := newTestStore(t)
-	const content = `{"schema_version": 2, "future": true}`
+	const content = `{"schema_version": 3, "future": true}`
 	if err := os.WriteFile(store.StatePath(), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -594,5 +594,135 @@ func TestConcurrentAtomicWritesRemainValid(t *testing.T) {
 	}
 	if state.SchemaVersion != CurrentSchemaVersion {
 		t.Errorf("SchemaVersion = %d", state.SchemaVersion)
+	}
+}
+
+func TestStateVersion1IsMigratedInMemoryAndOnSave(t *testing.T) {
+	store := newTestStore(t)
+	const content = `{"schema_version":1,"alerts":{"monthly_alerts":{"2026-10":[50,75]}}}`
+	if err := os.WriteFile(store.StatePath(), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := store.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", state.SchemaVersion, CurrentSchemaVersion)
+	}
+	if got := state.Alerts.MonthlyAlerts["2026-10"]; len(got) != 2 || got[0] != 50 || got[1] != 75 {
+		t.Errorf("migrated monthly alerts = %v, want [50 75]", got)
+	}
+	if state.Alerts.Anomaly6H != nil {
+		t.Errorf("migrated anomaly state = %+v, want nil", state.Alerts.Anomaly6H)
+	}
+
+	if err := store.SaveState(state); err != nil {
+		t.Fatalf("SaveState() after migration error = %v", err)
+	}
+	raw, err := os.ReadFile(store.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		t.Fatal(err)
+	}
+	if header.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("saved schema_version = %d, want %d", header.SchemaVersion, CurrentSchemaVersion)
+	}
+}
+
+func TestHistoryVersion1IsMigratedInMemoryAndOnSave(t *testing.T) {
+	store := newTestStore(t)
+	path, err := store.HistoryPath("2026-11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := json.Marshal(map[string]any{
+		"schema_version": 1,
+		"month":          "2026-11",
+		"finalized":      false,
+		"buckets": []map[string]any{{
+			"resource_id": "ocid1.vnic.oc1.iad.a",
+			"direction":   "outbound",
+			"hour":        "2026-11-01T00:00:00Z",
+			"bytes":       100,
+			"status":      "complete",
+			"captured_at": "2026-11-07T13:00:00Z",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	history, exists, err := store.LoadHistory("2026-11")
+	if err != nil {
+		t.Fatalf("LoadHistory() error = %v", err)
+	}
+	if !exists {
+		t.Fatal("LoadHistory() exists = false")
+	}
+	if history.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", history.SchemaVersion, CurrentSchemaVersion)
+	}
+	if history.Len() != 1 {
+		t.Errorf("buckets = %d, want 1", history.Len())
+	}
+
+	if err := store.SaveHistory(history); err != nil {
+		t.Fatalf("SaveHistory() after migration error = %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		t.Fatal(err)
+	}
+	if header.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("saved schema_version = %d, want %d", header.SchemaVersion, CurrentSchemaVersion)
+	}
+}
+
+func TestFinalizedVersion1HistoryIsReadButNotReopened(t *testing.T) {
+	store := newTestStore(t)
+	path, err := store.HistoryPath("2026-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := `{"schema_version":1,"month":"2026-10","finalized":true,"finalized_at":"2026-11-03T00:00:00Z","buckets":[]}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	history, exists, err := store.LoadHistory("2026-10")
+	if err != nil {
+		t.Fatalf("LoadHistory() error = %v", err)
+	}
+	if !exists || !history.Finalized {
+		t.Fatalf("history = %+v, exists = %v", history, exists)
+	}
+	if history.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("SchemaVersion = %d, want %d", history.SchemaVersion, CurrentSchemaVersion)
+	}
+	if err := store.SaveHistory(history); !errors.Is(err, ErrFinalizedHistory) {
+		t.Fatalf("SaveHistory() error = %v, want ErrFinalizedHistory", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != content {
+		t.Errorf("finalized version 1 history was rewritten: %q", raw)
 	}
 }
