@@ -1,0 +1,71 @@
+[Unit]
+Description=OCI Infrastructure Monitor — tráfico saliente y alertas por Telegram
+Documentation=file:/usr/local/share/doc/oci-infrastructure-monitor/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=oci-monitor
+Group=oci-monitor
+
+# Credenciales de Telegram. systemd lee el archivo como root y las inyecta en el
+# entorno; la aplicación también lo lee con --telegram-env. Por eso el archivo
+# debe pertenecer al usuario del servicio y tener modo 0600 (la aplicación
+# rechaza cualquier bit de grupo u otros). El prefijo "-" permite arrancar sin
+# el archivo cuando telegram.enabled=false; si está habilitado y faltan las
+# credenciales, la aplicación termina con código 2.
+EnvironmentFile=-/etc/oci-infrastructure-monitor/telegram.env
+ExecStart=/usr/local/bin/oci-infrastructure-monitor run --config /etc/oci-infrastructure-monitor/config.json --telegram-env /etc/oci-infrastructure-monitor/telegram.env
+
+# systemd crea /var/lib/oci-infrastructure-monitor con 0700; es la única ruta
+# persistente escribible bajo ProtectSystem=strict. Contiene state.json, lock y
+# history/.
+StateDirectory=oci-infrastructure-monitor
+StateDirectoryMode=0700
+
+# Salida a journald (la aplicación escribe en stderr).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=oci-infrastructure-monitor
+
+# El presupuesto interno de una ejecución es de 4 min, con los últimos 10 s
+# reservados para persistir. Un TimeoutStartSec menor podría interrumpir una
+# escritura atómica. TimeoutStopSec limita la espera tras SIGTERM: una parada
+# de systemd puede cortar la ejecución en curso, y la escritura atómica evita
+# dejar JSON a medias, no que la ejecución se complete.
+TimeoutStartSec=5min
+TimeoutStopSec=20s
+
+# Endurecimiento. NO se usa PrivateNetwork ni IPAddressDeny: la aplicación
+# necesita 169.254.169.254 (servicio de metadatos de OCI para Instance
+# Principals), los endpoints de OCI Monitoring y api.telegram.org por HTTPS.
+# El filtro de syscalls es @system-service, el conjunto estándar para servicios;
+# no se restringe la red.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0077
+RemoveIPC=yes
+
+# Solo se habilita el timer: no hay [Install] para que "systemctl enable" sobre
+# el service falle y nadie lo arranque en cada boot por error.

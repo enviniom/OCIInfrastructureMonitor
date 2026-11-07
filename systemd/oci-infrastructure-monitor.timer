@@ -1,0 +1,15 @@
+[Unit]
+Description=Ejecuta OCI Infrastructure Monitor cada 6 horas
+
+[Timer]
+# 00:00, 06:00, 12:00 y 18:00 (hora local del servidor; los buckets se
+# guardan siempre en UTC). El retardo aleatorio reparte la carga y evita que
+# todas las instancias consulten OCI en el mismo minuto.
+OnCalendar=*-*-* 00/6:00:00
+RandomizedDelaySec=15min
+AccuracySec=1min
+Persistent=true
+Unit=oci-infrastructure-monitor.service
+
+[Install]
+WantedBy=timers.target
