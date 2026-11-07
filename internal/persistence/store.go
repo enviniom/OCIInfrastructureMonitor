@@ -189,8 +189,9 @@ func (s *Store) LoadStateWith(options LoadOptions) (State, error) {
 		return State{}, s.corrupt(path, fmt.Errorf("decode state: %w", err), options)
 	}
 	state.ensureMaps()
-	// A version 1 state (Hito 2) only lacks alerts.anomaly_6h: migrate it in
-	// memory and let the next successful save write version 2.
+	// A version 1 (Hito 2) or version 2 (Hito 3) state lacks only the fields
+	// added later; migrate it in memory and let the next successful save write
+	// the current version.
 	state.SchemaVersion = CurrentSchemaVersion
 	if err := state.Validate(); err != nil {
 		return State{}, s.corrupt(path, err, options)
@@ -258,9 +259,10 @@ func (s *Store) LoadHistoryWith(month string, options LoadOptions) (*History, bo
 		return nil, false, s.corrupt(path, fmt.Errorf("history %s: file declares month %q", month, history.Month), options)
 	}
 	history.ensureIndex()
-	// A version 1 history has exactly the same fields as version 2; only the
-	// header changes. A finalized version 1 file is read as version 2 and is
-	// never rewritten because finalized histories are immutable.
+	// Version 1 and 2 histories have exactly the same fields as version 3;
+	// only the header changes. A finalized old history is read as the current
+	// version and is never rewritten because finalized histories are
+	// immutable.
 	history.SchemaVersion = CurrentSchemaVersion
 	if err := history.Validate(); err != nil {
 		return nil, false, s.corrupt(path, err, options)

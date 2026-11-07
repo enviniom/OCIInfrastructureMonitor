@@ -63,8 +63,15 @@ func TestStateRoundTrip(t *testing.T) {
 		Period:    "2026-10",
 		Level:     90,
 		CreatedAt: success,
+		Text:      "alerta pendiente de prueba",
 	})
 	state.Alerts.MonthlyAlerts["2026-10"] = []int{50, 75}
+	state.Alerts.CollectionFailure = &CollectionFailureState{
+		FailureSince:   timePtr(utc(2026, 11, 6, 0)),
+		LastNotifiedAt: timePtr(utc(2026, 11, 6, 12)),
+	}
+	telegramEnabled := false
+	state.TelegramEnabled = &telegramEnabled
 
 	if err := store.SaveState(state); err != nil {
 		t.Fatalf("SaveState() error = %v", err)
@@ -189,7 +196,7 @@ func TestLoadHistoryReadOnlyDoesNotQuarantine(t *testing.T) {
 
 func TestUnknownSchemaStateIsPreserved(t *testing.T) {
 	store := newTestStore(t)
-	const content = `{"schema_version": 3, "future": true}`
+	const content = `{"schema_version": 4, "future": true}`
 	if err := os.WriteFile(store.StatePath(), []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +356,7 @@ func TestSaveHistoryRefusesFinalized(t *testing.T) {
 func TestSaveHistoryRefusesUnknownSchemaOnDisk(t *testing.T) {
 	store := newTestStore(t)
 	path, _ := store.HistoryPath("2026-11")
-	const content = `{"schema_version": 3, "month": "2026-11", "buckets": []}`
+	const content = `{"schema_version": 4, "month": "2026-11", "buckets": []}`
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -438,6 +445,22 @@ func TestStateValidation(t *testing.T) {
 		{"pending bad period", func(s *State) {
 			s.Pending = append(s.Pending, Notification{Kind: NotificationAnomaly6H, Period: "x", CreatedAt: utc(2026, 11, 7, 13)})
 		}, "invalid period"},
+		{"pending unknown kind", func(s *State) {
+			s.Pending = append(s.Pending, Notification{Kind: "future", CreatedAt: utc(2026, 11, 7, 13)})
+		}, "unknown kind"},
+		{"pending monthly without level", func(s *State) {
+			s.Pending = append(s.Pending, Notification{Kind: NotificationMonthlyThreshold, Period: "2026-11", CreatedAt: utc(2026, 11, 7, 13)})
+		}, "no level"},
+		{"pending text too long", func(s *State) {
+			s.Pending = append(s.Pending, Notification{
+				Kind: NotificationAnomaly6H, Period: "2026-11", CreatedAt: utc(2026, 11, 7, 13),
+				Text: strings.Repeat("x", MaxNotificationTextRunes+1),
+			})
+		}, "exceeds"},
+		{"collection failure zero time", func(s *State) {
+			zero := time.Time{}
+			s.Alerts.CollectionFailure = &CollectionFailureState{FailureSince: &zero}
+		}, "zero time"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -616,6 +639,51 @@ func TestStateVersion1IsMigratedInMemoryAndOnSave(t *testing.T) {
 	}
 	if state.Alerts.Anomaly6H != nil {
 		t.Errorf("migrated anomaly state = %+v, want nil", state.Alerts.Anomaly6H)
+	}
+
+	if err := store.SaveState(state); err != nil {
+		t.Fatalf("SaveState() after migration error = %v", err)
+	}
+	raw, err := os.ReadFile(store.StatePath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var header struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		t.Fatal(err)
+	}
+	if header.SchemaVersion != CurrentSchemaVersion {
+		t.Errorf("saved schema_version = %d, want %d", header.SchemaVersion, CurrentSchemaVersion)
+	}
+}
+
+func TestStateVersion2IsMigratedToVersion3(t *testing.T) {
+	store := newTestStore(t)
+	const content = `{"schema_version":2,"alerts":{"monthly_alerts":{"2026-10":[50,75]},"anomaly_6h":{"last_notified_at":"2026-10-15T00:00:00Z"}}}`
+	if err := os.WriteFile(store.StatePath(), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := store.LoadState()
+	if err != nil {
+		t.Fatalf("LoadState() error = %v", err)
+	}
+	if state.SchemaVersion != CurrentSchemaVersion {
+		t.Fatalf("SchemaVersion = %d, want %d", state.SchemaVersion, CurrentSchemaVersion)
+	}
+	if got := state.Alerts.MonthlyAlerts["2026-10"]; len(got) != 2 || got[1] != 75 {
+		t.Errorf("monthly alerts = %v, want [50 75]", got)
+	}
+	if state.Alerts.Anomaly6H == nil || state.Alerts.Anomaly6H.LastNotifiedAt == nil {
+		t.Errorf("anomaly state = %+v, want last_notified_at kept", state.Alerts.Anomaly6H)
+	}
+	if state.Alerts.CollectionFailure != nil {
+		t.Errorf("collection_failure = %+v, want nil after migration", state.Alerts.CollectionFailure)
+	}
+	if state.TelegramEnabled != nil {
+		t.Errorf("telegram_enabled = %v, want nil after migration", state.TelegramEnabled)
 	}
 
 	if err := store.SaveState(state); err != nil {

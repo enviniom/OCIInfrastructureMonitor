@@ -13,16 +13,21 @@ import (
 // CurrentSchemaVersion is the version written to every state and history file.
 // A file with a version this binary does not understand is rejected without
 // being overwritten.
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 // OldestSupportedSchemaVersion is the oldest version this binary can read. A
-// version 1 file (the Hito 2 schema) is migrated in memory and rewritten as
-// version 2 on the next successful save; a version 1 finalized history is read
-// as is and never rewritten.
+// version 1 (Hito 2) or version 2 (Hito 3) file is migrated in memory and
+// rewritten as version 3 on the next successful save; a finalized history is
+// migrated in memory and never rewritten because it is immutable.
 const OldestSupportedSchemaVersion = 1
 
 // MonthLayout formats month identifiers, which are also history file names.
 const MonthLayout = "2006-01"
+
+// MaxNotificationTextRunes is the Telegram message limit. The rendered text is
+// persisted with the queued notification, so it is validated like any other
+// state field.
+const MaxNotificationTextRunes = 4096
 
 // Direction identifies the traffic direction of a bucket. Both directions are
 // stored separately and are never added together.
@@ -257,8 +262,9 @@ type VNICState struct {
 	WarningSince *time.Time `json:"warning_since,omitempty"`
 }
 
-// Notification is one queued Telegram message. The queue logic belongs to the
-// Hito 4; the Hito 2 only persists the field so the schema is stable.
+// Notification is one queued Telegram message. The rendered Text is stored with
+// the entry so a notification generated in an earlier month still quotes the
+// data and the period that produced it when it is finally delivered.
 type Notification struct {
 	Kind        string     `json:"kind"`
 	Period      string     `json:"period,omitempty"`
@@ -266,16 +272,28 @@ type Notification struct {
 	CreatedAt   time.Time  `json:"created_at"`
 	Attempts    int        `json:"attempts"`
 	LastAttempt *time.Time `json:"last_attempt,omitempty"`
+	Text        string     `json:"text,omitempty"`
 }
 
-// Notification kinds. Only monthly_threshold is produced from the Hito 3 on;
-// the rest are documented so the field has a closed vocabulary.
+// Notification kinds. Only monthly_threshold and anomaly_6h are produced from
+// the Hito 3 on; the collection kinds are produced by the Hito 4 orchestration.
 const (
 	NotificationMonthlyThreshold   = "monthly_threshold"
 	NotificationAnomaly6H          = "anomaly_6h"
 	NotificationCollectionFailure  = "collection_failure"
 	NotificationCollectionRecovery = "collection_recovery"
 )
+
+// ValidNotificationKind reports whether kind belongs to the closed vocabulary
+// of queued notifications.
+func ValidNotificationKind(kind string) bool {
+	switch kind {
+	case NotificationMonthlyThreshold, NotificationAnomaly6H,
+		NotificationCollectionFailure, NotificationCollectionRecovery:
+		return true
+	}
+	return false
+}
 
 // MonthCorrections accumulates the corrections applied to a month while it is
 // inside the requery grace period.
@@ -288,8 +306,9 @@ type MonthCorrections struct {
 // AlertState holds the alert bookkeeping.
 // MonthlyAlerts maps a month ("YYYY-MM") to the thresholds already notified.
 type AlertState struct {
-	MonthlyAlerts map[string][]int `json:"monthly_alerts,omitempty"`
-	Anomaly6H     *Anomaly6HState  `json:"anomaly_6h,omitempty"`
+	MonthlyAlerts     map[string][]int        `json:"monthly_alerts,omitempty"`
+	Anomaly6H         *Anomaly6HState         `json:"anomaly_6h,omitempty"`
+	CollectionFailure *CollectionFailureState `json:"collection_failure,omitempty"`
 }
 
 // Anomaly6HState is the bookkeeping of the abnormal-consumption alert over the
@@ -297,6 +316,16 @@ type AlertState struct {
 // delivery, so the cooldown is measured from an alert that actually left the
 // system.
 type Anomaly6HState struct {
+	LastNotifiedAt *time.Time `json:"last_notified_at,omitempty"`
+}
+
+// CollectionFailureState is the bookkeeping of the persistent collection error
+// and its recovery. FailureSince is the first failure of the current streak and
+// is cleared once the recovery has been queued, delivered or logged.
+// LastNotifiedAt is the last successful delivery of the collection_failure
+// alert and starts the repetition cooldown.
+type CollectionFailureState struct {
+	FailureSince   *time.Time `json:"failure_since,omitempty"`
 	LastNotifiedAt *time.Time `json:"last_notified_at,omitempty"`
 }
 
@@ -312,6 +341,11 @@ type State struct {
 	Pending             []Notification              `json:"pending_notifications"`
 	VNICs               map[string]VNICState        `json:"vnics"`
 	Months              map[string]MonthCorrections `json:"months"`
+	// TelegramEnabled records the telegram.enabled value of the last run so
+	// the disabled to enabled transition can collapse the stale queue into a
+	// single current alert. Nil means the value was never recorded (a version
+	// 1 or 2 state): the transition is not inferred from it.
+	TelegramEnabled *bool `json:"telegram_enabled,omitempty"`
 }
 
 // NewState returns an empty state for the current schema.
@@ -422,6 +456,14 @@ func (s State) Validate() error {
 	if s.Alerts.Anomaly6H != nil && s.Alerts.Anomaly6H.LastNotifiedAt != nil && s.Alerts.Anomaly6H.LastNotifiedAt.IsZero() {
 		return errors.New("state: anomaly_6h last_notified_at is the zero time")
 	}
+	if failure := s.Alerts.CollectionFailure; failure != nil {
+		if failure.FailureSince != nil && failure.FailureSince.IsZero() {
+			return errors.New("state: collection_failure failure_since is the zero time")
+		}
+		if failure.LastNotifiedAt != nil && failure.LastNotifiedAt.IsZero() {
+			return errors.New("state: collection_failure last_notified_at is the zero time")
+		}
+	}
 	for id, v := range s.VNICs {
 		if id == "" {
 			return errors.New("state: empty VNIC OCID")
@@ -434,16 +476,31 @@ func (s State) Validate() error {
 		if n.Kind == "" {
 			return fmt.Errorf("state: pending notification %d has no kind", i)
 		}
+		if !ValidNotificationKind(n.Kind) {
+			return fmt.Errorf("state: pending notification %d has unknown kind %q", i, n.Kind)
+		}
 		if n.Period != "" {
 			if _, err := MonthStart(n.Period); err != nil {
 				return fmt.Errorf("state: pending notification %d has invalid period %q", i, n.Period)
 			}
+		}
+		if n.Level < 0 || n.Level > 100 {
+			return fmt.Errorf("state: pending notification %d has invalid level %d", i, n.Level)
+		}
+		if n.Kind == NotificationMonthlyThreshold && n.Level == 0 {
+			return fmt.Errorf("state: pending monthly notification %d has no level", i)
 		}
 		if n.CreatedAt.IsZero() {
 			return fmt.Errorf("state: pending notification %d has no created_at", i)
 		}
 		if n.Attempts < 0 {
 			return fmt.Errorf("state: pending notification %d has negative attempts", i)
+		}
+		if n.LastAttempt != nil && n.LastAttempt.IsZero() {
+			return fmt.Errorf("state: pending notification %d has a zero last_attempt", i)
+		}
+		if len([]rune(n.Text)) > MaxNotificationTextRunes {
+			return fmt.Errorf("state: pending notification %d text exceeds %d characters", i, MaxNotificationTextRunes)
 		}
 	}
 	return nil
