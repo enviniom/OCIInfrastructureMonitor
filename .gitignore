@@ -1,0 +1,19 @@
+# Binarios y artefactos de compilación
+dist/
+*.exe
+*.test
+*.out
+coverage.*
+
+# Configuración local y secretos
+*.env
+configs/config.json
+
+# Estado en tiempo de ejecución (normalmente fuera del repo)
+state.json
+history/
+*.corrupt-*
+
+# Sistema y editor
+.DS_Store
+*.swp
