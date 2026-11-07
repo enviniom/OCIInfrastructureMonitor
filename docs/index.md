@@ -6,7 +6,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 
 ## Estado
 
-- **Implementación:** Hito 3 cerrado; `internal/config`, cliente OCI, `check`, `version`, persistencia, buckets horarios, `status` y evaluadores de alertas listos. Hito 4 no iniciado.
+- **Implementación:** Hito 4 cerrado; `internal/config`, cliente OCI, `check`, `version`, persistencia, buckets horarios, `status`, evaluadores de alertas, `internal/telegram`, cola de pendientes, `run`, `--dry-run`, `test-telegram` y esquema `state.json` v3. Hito 5 no iniciado.
 - **Repositorio:** `go.mod` (`go 1.27.3`), `Roadmap.md` y git inicializado; aún no hay `README.md`.
 - [x] Roadmap dividido en 5 hitos autocontenidos (2026-11-07).
 - [x] Índice de hitos con casillas de seguimiento.
@@ -17,6 +17,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 - [x] Hito 1 cerrado: cliente OCI, `check`, `version`, tests con mocks y `go test -race` (2026-11-07).
 - [x] Hito 2 cerrado: `internal/persistence`, `internal/accumulate`, `app.Collect`, comando `status`, tests de duplicados, cambio de mes, finalización, correcciones, huecos, `no_data`, corrupción y concurrencia (2026-11-07).
 - [x] Hito 3 cerrado: `internal/alerts`, evaluadores de umbrales mensuales y de consumo anormal de 6 h, deduplicación, enfriamiento, avisos de datos incompletos/provisionales y esquema `state.json` v2 con migración desde v1 (2026-11-07).
+- [x] Hito 4 cerrado: `internal/telegram`, `internal/outbox`, `internal/logging`, ciclo completo de `run` con lock, cola, persistencia tras cada envío, error persistente y recuperación, `--dry-run`, `test-telegram`, mensajes en español y esquema v3 con migración desde v1/v2 (2026-11-07).
 
 ## Cómo se usa este índice
 
@@ -40,7 +41,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 - [x] **[Hito 1 — Investigación, configuración y cliente OCI](hitos/hito-1-investigacion-configuracion-cliente-oci.md).** Documenta unidades, semántica, agregación y límites de OCI Monitoring; implementa `config`, el cliente de Monitoring con Instance Principals, `check` y `version`.
 - [x] **[Hito 2 — Persistencia y acumulación](hitos/hito-2-persistencia-acumulacion.md).** Implementa `state.json`, historial mensual, buckets horarios, escritura atómica, bloqueo, corrupción y el comando `status`.
 - [x] **[Hito 3 — Alertas](hitos/hito-3-alertas.md).** Implementa umbrales mensuales y consumo anormal de 6 h, con deduplicación, enfriamiento y manejo de datos incompletos.
-- [ ] **[Hito 4 — Telegram y orquestación](hitos/hito-4-telegram-orquestacion.md).** Implementa el cliente de Telegram, la cola de pendientes, el ciclo completo de `run`, `--dry-run` y `test-telegram`.
+- [x] **[Hito 4 — Telegram y orquestación](hitos/hito-4-telegram-orquestacion.md).** Implementa el cliente de Telegram, la cola de pendientes, el ciclo completo de `run`, `--dry-run` y `test-telegram`.
 - [ ] **[Hito 5 — systemd, compilación y documentación](hitos/hito-5-systemd-compilacion-documentacion.md).** Cierra con service/timer, binarios, checksums, documentación de despliegue y entrega final.
 
 ## Mapa de hitos
@@ -57,12 +58,12 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 
 Estos criterios aplican al proyecto completo, no a un hito aislado:
 
-- [ ] `go build ./...` sin errores en cada cierre de hito.
-- [ ] `go vet ./...` sin advertencias.
-- [ ] `go test ./...` en verde.
-- [ ] `go test -race ./...` ejecutado (o su limitación documentada).
-- [ ] Cada cierre deja [`progress.md`](progress.md) actualizado con resultados reales.
-- [ ] Cada decisión relevante está en [`decisions.md`](decisions.md).
+- [x] `go build ./...` sin errores en cada cierre de hito.
+- [x] `go vet ./...` sin advertencias.
+- [x] `go test ./...` en verde.
+- [x] `go test -race ./...` ejecutado (o su limitación documentada).
+- [x] Cada cierre deja [`progress.md`](progress.md) actualizado con resultados reales.
+- [x] Cada decisión relevante está en [`decisions.md`](decisions.md).
 - [ ] `check` contra OCI real validado por el usuario.
 - [ ] Pertenencia de la instancia al Dynamic Group verificada por el usuario.
 - [ ] Envío real a Telegram validado por el usuario.
@@ -108,21 +109,22 @@ Resumen de lo acordado con el autor del roadmap (detalle en [`decisions.md`](dec
 - **Alertas:** evaluadores puros sobre los buckets persistidos; solo se evalúa el mes en curso; se registran los umbrales nuevos al confirmar el envío; la anomalía de 6 h usa enfriamiento configurable y advierte de ventanas provisionales/incompletas.
 - **Unidad:** solo GiB (`monthly_limit_gib`, `high_traffic_6h_gib`).
 - **Errores:** 3 fallos consecutivos, enfriamiento 24 h, recuperación según la regla de colapso.
-- **Lock y cola:** `run` y `--dry-run` con `flock` exclusivo; `status` atómico sin lock; `check` sin lock. Cola máxima 50, caducidad 7 días, colapso por `(período, tipo)` al nivel más alto.
+- **Lock y cola:** `run` y `--dry-run` con `flock` exclusivo; `status` atómico sin lock; `check` sin lock. Cola máxima 50, caducidad 7 días, colapso por `(período, tipo)` al nivel más alto, con el texto renderizado persistido para una entrega posterior.
 - **Contrato:** configuración en `/etc/oci-infrastructure-monitor/config.json` con `--config`; variables `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`; códigos 0/2/3/4/5/6 con prioridad 2 > 4 > 3 > 5 y todos los errores en log. Deadline interno de 4 min y `TimeoutStartSec` de 5 min.
 - **`check`:** sin permisos nuevos; usa `ListMetrics` sobre `oci_vcn`. OCID mal formado → `2`; VNIC visible → `0`; VNIC no visible → `0` con warning muy visible (“puede no existir, no tener métricas o no haber tenido tráfico”); consulta fallida → `3`.
 - **`status`:** mes actual y anterior; si el anterior no está finalizado, se muestra como “no finalizado (en gracia)” con las correcciones acumuladas.
 - **Telegram con `enabled=false`:** evalúa y registra, pero no encola, no envía pendientes ni marca como enviado. La caducidad de 7 días sigue aplicando a la cola existente; al habilitar se colapsa lo vigente y se emite una sola alerta con el nivel actual.
 - **Fallo parcial de VNIC:** la afectada queda `incomplete`, se continúa con las demás y se sale `3` con el total incompleto.
+- **Telegram (transporte):** API oficial con `net/http`; credenciales en `telegram.env` con permisos `0600`; timeout por intento, 3 intentos con backoff, `429` con `retry_after` y redacción del token en errores y logs. Un `429` que no cabe en el deadline deja la cola persistida y sale `5`.
 - **Entrada y git:** `docs/index.md` hasta el README del Hito 5; `git init` y commit por hito.
 
 ## Validación real pendiente
 
-Los hitos 1, 2 y 3 cerraron con tests y mocks. Quedan para después del despliegue: `check` contra OCI real, pertenencia al Dynamic Group, política restrictiva, publicación de ceros, semántica delta/`sum()`, latencia real y el formato real de los timestamps agregados. La lista viva está en [`progress.md`](progress.md#validaciones-pendientes-del-hito-2).
+Los hitos 1, 2, 3 y 4 cerraron con tests y mocks (incluido un servidor HTTP simulado para Telegram). Quedan para después del despliegue: `check` contra OCI real, pertenencia al Dynamic Group, política restrictiva, publicación de ceros, semántica delta/`sum()`, latencia real, formato real de los timestamps agregados, envío real a Telegram, `429` real, permisos reales de `telegram.env` y el timer systemd. La lista viva está en [`progress.md`](progress.md).
 
 ## Detalles menores por decidir en implementación
 
-- Redacción exacta de la alerta pendiente del mes anterior (Hito 4).
+- La redacción de la notificación pendiente del mes anterior quedó resuelta en el Hito 4: conserva su período y lleva un `AVISO` con la fecha de generación.
 - Flag JSON de `status`: queda para el futuro; la v1 es texto para humanos.
 
 ## Decisión sobre el roadmap original

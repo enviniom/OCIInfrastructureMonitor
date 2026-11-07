@@ -6,11 +6,11 @@
 
 | Campo | Valor |
 |---|---|
-| Hito en curso | Hito 4 — no iniciado |
-| Último hito cerrado | Hito 3 — 2026-11-07 |
-| Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test` y `go test -race` |
-| Resultado de la verificación | OK en `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/app`, `internal/alerts` y `cmd/monitor`; `internal/oci` sin tests propios |
-| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram, timer systemd, `status` con estado real, publicación de ceros y umbrales de alerta con tráfico real |
+| Hito en curso | Hito 5 — no iniciado |
+| Último hito cerrado | Hito 4 — 2026-11-07 |
+| Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test`, `go test -race` y conteo de tests |
+| Resultado de la verificación | OK en 226 tests de nivel superior (270 casos con subtests) en `cmd/monitor`, `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/alerts`, `internal/app`, `internal/telegram`, `internal/outbox` y `internal/logging`; `internal/oci` sin tests propios |
+| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram real, `429` real, timer systemd, `status` con estado real, publicación de ceros y umbrales de alerta con tráfico real |
 
 ## Plantilla de cierre de hito
 
@@ -261,6 +261,62 @@ Todas en `docs/decisions.md`.
 - Implementar `internal/telegram`, la cola de pendientes y el comando `run` de 13 pasos.
 - Al evaluar, pasar a `alerts.Evaluate` el estado ya vaciado de pendientes y los historiales del mes actual y anterior.
 - Llamar a `alerts.MarkNotified` solo después de un envío correcto.
+
+### 2026-11-07 — Hito 4 cerrado
+
+**Completado**
+
+- `internal/telegram`: credenciales desde `telegram.env` con permisos `0600` (o variables de entorno), cliente HTTP con timeout por intento, 3 intentos con backoff, reintento de red/timeout/`408`/`5xx`, tratamiento de `429` con `retry_after`, `RetryAfterError` cuando la espera no cabe en el deadline y redacción del token en todos los errores. Nunca se acepta el token por argumentos ni se escribe en log.
+- `internal/outbox`: cola acotada a 50 entradas y 7 días, descarte de la más antigua con registro, colapso por `(kind, period)` al nivel más alto y conservación del texto renderizado.
+- `internal/logging`: logger real con niveles `debug`/`info`/`warn`/`error`, timestamps UTC y escritura concurrente segura.
+- `app.Run`: ciclo completo de 13 pasos. Lock exclusivo y no bloqueante antes de leer estado (también con la red deshabilitada), `collectInternal` sin persistir, historiales guardados en el paso 7, `state.json` guardado tras cada envío correcto y en el paso 12, cola vaciada antes de evaluar umbrales y anomalía, y salud de recopilación planificada antes del vaciado para retirar una alerta de error obsoleta.
+- Fallo de OCI no aborta: las horas afectadas quedan `incomplete`, se envían los pendientes y se sale `3`; un fallo parcial de VNIC continúa con las demás. Una VNIC nunca visible cuenta como fallo de recopilación para el error persistente, sin cambiar el código de salida.
+- Error persistente de recopilación a los 3 fallos, enfriamiento de 24 h y recuperación en sus tres ramas: enviada, retirada de la cola y sustituida por una sola recuperación, o solo log si nunca se generó.
+- Mensajes en español para alerta mensual, consumo anormal, error persistente, recuperación y prueba. Todos incluyen instancia, región, período, consumo, límite, porcentaje, fecha de evaluación, tipo de medición, severidad y la nota de tráfico registrado no facturable. Una notificación de un período anterior se envía con su período y un `AVISO` de que se generó antes.
+- CLI: `run [--dry-run] [--config] [--telegram-env]`, `test-telegram`, `check`, `status`, `version` y `--help`. Códigos `0/2/3/4/5/6` con prioridad `2 > 4 > 3 > 5`; `test-telegram` funciona con `telegram.enabled=false`; `status` muestra el mes anterior no finalizado como «no finalizado (en gracia)» con sus correcciones.
+- Esquema `3`: `pending_notifications[].text`, `alerts.collection_failure` y `telegram_enabled`. Migración en memoria de v1/v2 y reescritura como v3; un historial finalizado antiguo se lee como v3 y no se reescribe.
+- 226 tests de nivel superior (270 casos con subtests), entre ellos servidor HTTP simulado para éxito, `4xx`, `5xx`, `429` corto y largo, timeout, error de red y ausencia del token en logs y errores; `run` de extremo a extremo con mocks para éxito, fallo de OCI, fallo parcial de VNIC, lock ocupado, cola llena/caducada, reintento, transición de Telegram, `--dry-run` y persistencia tras cada envío.
+
+**Parcial o pendiente**
+
+- El envío real a Telegram, la recepción de un `429` real y la latencia real siguen pendientes de validación en producción; todo lo anterior está probado con servidor HTTP simulado.
+- `TimeoutStartSec=5min`, el service/timer systemd, los binarios, los checksums y la documentación de despliegue son del Hito 5.
+- La comprobación de una VNIC nunca visible no cambia el código de salida (`0` con warning); el acumulado queda `incomplete` y la alerta persistente se dispara a los 3 fallos. Está documentado en `decisions.md`.
+- El `Text` de la cola se valida a 4096 caracteres; los mensajes generados quedan muy por debajo.
+
+**Verificación ejecutada**
+
+| Comando | Resultado | Fecha |
+|---|---|---|
+| `go build ./...` | OK | 2026-11-07 |
+| `go vet ./...` | OK | 2026-11-07 |
+| `go test ./...` | OK (226 tests de nivel superior; 270 casos con subtests) | 2026-11-07 |
+| `go test -race ./...` | OK | 2026-11-07 |
+
+**Decisiones nuevas**
+
+- Transporte de Telegram, credenciales y protección del token.
+- Cola de pendientes, colapso, caducidad y texto persistido.
+- Orden de `run`, persistencia tras cada envío y transición deshabilitado→habilitado.
+- Error persistente de recopilación, enfriamiento y recuperación.
+- Esquema v3.
+- Códigos de salida y deadline global.
+
+Todas en `docs/decisions.md`.
+
+**Supuestos pendientes de validar en producción**
+
+- Permisos reales de `telegram.env` (`0600`) y del usuario del servicio.
+- Latencia real de Telegram y comportamiento real de `429`/`retry_after`.
+- Que el mensaje de prueba llegue al chat configurado y que el token no aparezca en `journalctl` ni en `systemctl status`.
+- Que la alerta de VNIC nunca visible no sea un falso positivo en una VNIC realmente inactiva; ajustar la interpretación con tráfico real.
+- Que el deadline de 4 min sea suficiente con la latencia real de OCI y Telegram.
+
+**Para la siguiente sesión**
+
+- Leer `docs/hitos/hito-5-systemd-compilacion-documentacion.md`, `docs/architecture.md#telegram-y-orquestación-hito-4` y `docs/decisions.md`.
+- Implementar el Hito 5: unidad systemd con `TimeoutStartSec=5min`, timer, binarios `linux/arm64` y `linux/amd64`, `dist/SHA256SUMS`, `README.md`, `deployment.md`, `troubleshooting.md` y entrega final.
+- No reabrir los hitos 1–4; las validaciones reales quedan para el responsable del proyecto tras el despliegue.
 
 ## Validaciones pendientes del Hito 3
 

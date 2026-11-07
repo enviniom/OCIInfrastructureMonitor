@@ -31,6 +31,8 @@ Garantías del ciclo:
 
 Con `--dry-run`: se ejecutan los pasos de lectura y cálculo, pero no se escribe estado, no se encola ni se envía nada, y no se marca ninguna alerta como enviada. La lectura tampoco mueve un archivo corrupto: se informa y se sale sin tocarlo.
 
+**Implementación (Hito 4).** `app.Run` es el orquestador. `collectInternal` ejecuta los pasos 4–8 sin persistir; `Run` guarda los historiales en el paso 7 y `state.json` después de cada envío correcto y en el paso 12. El lock se toma siempre antes de leer estado, también con `network.enabled=false`. La salud de recopilación se planifica antes de vaciar la cola para poder retirar una alerta de error obsoleta; los umbrales mensuales y la anomalía se evalúan después del vaciado. Todo el detalle de transporte, cola y códigos está en [Telegram y orquestación](#telegram-y-orquestación-hito-4).
+
 ## Métricas de red (Hito 1)
 
 ### Namespace y métricas
@@ -110,7 +112,7 @@ No se factura por el uso de Telegram desde la aplicación; el coste relevante es
     └── 2026-12.json
 ```
 
-Todos los archivos llevan `"schema_version": 2` desde el Hito 3. La lectura acepta también `1`: un estado o historial v1 se migra en memoria y se reescribe como v2 en el siguiente guardado; un historial v1 finalizado se lee como v2 y no se reescribe. Una versión desconocida se rechaza con código `4` sin mover ni sobrescribir el archivo (`OldestSupportedSchemaVersion` marca el límite inferior). La lectura es estricta: cualquier campo nuevo exige subir la versión de esquema y migrar. Un archivo ilegible o que no valida sus invariantes se mueve a `<nombre>.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio. La excepción es `--dry-run`, que lee con `LoadOptions{Quarantine:false}` y no mueve nada.
+Todos los archivos llevan `"schema_version": 3` desde el Hito 4. La lectura acepta también `1` y `2`: un estado o historial antiguo se migra en memoria y se reescribe como v3 en el siguiente guardado; un historial finalizado se lee como v3 y no se reescribe. Una versión desconocida se rechaza con código `4` sin mover ni sobrescribir el archivo (`OldestSupportedSchemaVersion` marca el límite inferior). La lectura es estricta: cualquier campo nuevo exige subir la versión de esquema y migrar. Un archivo ilegible o que no valida sus invariantes se mueve a `<nombre>.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio. La excepción es `--dry-run`, que lee con `LoadOptions{Quarantine:false}` y no mueve nada.
 
 `state.json` contiene:
 
@@ -122,7 +124,10 @@ Todos los archivos llevan `"schema_version": 2` desde el Hito 3. La lectura acep
 | `finalized_months` | Espejo de los meses cerrados, para planificar sin abrir historiales antiguos. |
 | `alerts.monthly_alerts` | Umbrales ya notificados por período (los escribe `alerts.MarkNotified`). |
 | `alerts.anomaly_6h.last_notified_at` | Último envío correcto de la alerta de anomalía; arranca el enfriamiento. |
-| `pending_notifications` | Cola de Telegram con `kind`, `period`, `level`, `created_at`, `attempts` y `last_attempt` (la lógica de cola es del Hito 4). |
+| `alerts.collection_failure.failure_since` | Primer fallo de la racha actual de recopilación. |
+| `alerts.collection_failure.last_notified_at` | Último envío correcto del error persistente; arranca el enfriamiento. |
+| `pending_notifications` | Cola de Telegram con `kind`, `period`, `level`, `created_at`, `attempts`, `last_attempt` y el `text` renderizado. |
+| `telegram_enabled` | Valor de `telegram.enabled` en la última ejecución; detecta la transición deshabilitado→habilitado. |
 | `vnics` | `first_visible`, `last_visible`, `last_data_at`, `visible` y `warning_since` por OCID de VNIC. |
 | `months` | `buckets_corrected`, `delta_bytes` y `updated_at` por mes, acumulados durante la gracia. |
 
@@ -130,7 +135,7 @@ Todos los archivos llevan `"schema_version": 2` desde el Hito 3. La lectura acep
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "month": "2026-11",
   "finalized": false,
   "buckets": [
@@ -217,6 +222,44 @@ La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal (lo 
 - `alerts.Alert` lleva el tipo, el período, el nivel (el porcentaje máximo en las mensuales), los bytes, el límite, el porcentaje truncado, la ventana y los avisos.
 - `Alert.Notification()` produce la entrada de la cola (`kind`, `period`, `level`, `created_at`) que persiste el Hito 4.
 - `alerts.MarkNotified(state, alert, at)` solo se llama tras una respuesta correcta de Telegram: fusiona los umbrales cruzados en `monthly_alerts` o fija `anomaly_6h.last_notified_at`. `MarkNotificationNotified` hace lo mismo para una entrada de la cola, que solo guarda el nivel máximo: al entregar el 90 % registra 50, 75 y 90. Los evaluadores nunca marcan nada.
+- Desde el Hito 4, `app.Run` encola, envía, persiste tras cada entrega y aplica el colapso y la caducidad. Ver [Telegram y orquestación](#telegram-y-orquestación-hito-4).
+
+## Telegram y orquestación (Hito 4)
+
+### Transporte y credenciales
+
+`internal/telegram` usa `net/http` y la API oficial (`https://api.telegram.org/bot<token>/sendMessage`), sin frameworks de bots. El token y el Chat ID se leen de `/etc/oci-infrastructure-monitor/telegram.env` por defecto (`--telegram-env` permite otra ruta); las variables de entorno no vacías tienen prioridad. El archivo debe tener permisos `0600` (sin bits de grupo u otros); otros permisos se rechazan. El token nunca se acepta por argumentos, no se escribe en log y se redacta de cualquier error de transporte, porque la URL lo contiene.
+
+- Timeout HTTP por intento: 10 s. Hasta 3 intentos con backoff 500 ms → 5 s.
+- Se reintentan errores de red, timeouts, `408` y `5xx`; un `4xx` distinto de `429` es permanente.
+- Un `429` respeta `retry_after`. Si la espera cabe en el contexto de entrega (45 s o el tiempo restante), se espera y se reintenta; si no cabe, el cliente devuelve `RetryAfterError`, la notificación queda encolada y `run` sale `5`.
+- El fallo de Telegram no cuenta para el error persistente de recopilación: va a log y al código de salida.
+
+### Cola de pendientes
+
+- Máximo 50 entradas y caducidad de 7 días (fijas). Al caducar o desbordarse se descarta la más antigua y se registra.
+- Colapso por `(kind, period)` al nivel más alto. Una alerta mensual superior sustituye a la pendiente; una igual o inferior se suprime. La anomalía y el error persistente no se duplican para el mismo período. Al enviar el 90 % se registran los umbrales 50, 75 y 90 como cruzados, de modo que el 75 % no se reenvía.
+- Cada entrada guarda el texto ya renderizado: una notificación generada en un mes anterior conserva su período, sus datos y su ventana. Al enviarla se antepone un `AVISO` con su período y su fecha de generación.
+- Una entrada fallida permanece en la cola, incrementa `attempts`, guarda `last_attempt` y se reintenta en la siguiente ejecución. La cola se vacía antes de evaluar los umbrales mensuales y la anomalía. La salud de recopilación se planifica antes del vaciado para sustituir una alerta de error que ya no procede por su recuperación.
+
+### Escritura, `--dry-run` y transición de Telegram
+
+- `state.json` se persiste después de cada envío correcto y en el paso 12, no solo al final.
+- `--dry-run` ejecuta las lecturas y los cálculos, pero no escribe estado ni historial, no mueve archivos corruptos, no encola, no envía y no marca nada. El `flock` se adquiere igualmente, así que el directorio de estado y el archivo `lock` pueden crearse; `state.json`, `history/` y los `*.corrupt-*` no se tocan. La simulación cuenta en memoria la cola que se vaciaría y las alertas nuevas (`WouldSend`), pero no persiste esa cola. Los códigos de configuración, persistencia y OCI se conservan; no puede devolver `5` porque no envía.
+- `network.enabled=false` toma el lock y sale `0` sin consultar OCI ni escribir estado; los pendientes esperan a que se reactive.
+- `telegram.enabled=false` aplica la caducidad de 7 días, evalúa y registra en log y `status`, pero no encola, no envía pendientes y no marca como enviado. Al reactivarlo se descartan las alertas mensuales pendientes y se emite una sola con el nivel actual; las de anomalía y de recopilación conservan su semántica. `state.telegram_enabled` recuerda el valor anterior para detectar la transición.
+
+### Error persistente y recuperación
+
+- `collection_failure_threshold` fallos consecutivos (3 por defecto) disparan `collection_failure`, con enfriamiento de `collection_failure_cooldown_hours` (24 h) desde el último envío correcto y sin duplicar una pendiente.
+- Cuenta como fallo una consulta fallida y una VNIC que nunca fue visible en consultas exitosas. Una VNIC visible que deja de aparecer no cuenta como fallo: se conserva `last_visible` y se emite un warning en la transición.
+- Recuperación: si el error se envió, se envía una `collection_recovery` con el rango; si sigue en cola, se retira y se sustituye por una sola recuperación; si nunca se generó, solo se registra en log. Con `telegram.enabled=false` la alerta pendiente se retira igualmente, pero la recuperación solo se registra en log: no se encola nada mientras el canal está deshabilitado.
+- Una VNIC nunca visible deja el acumulado `incomplete` y se avisa, pero no cambia el código de salida: solo una consulta fallida produce `3`.
+
+### Códigos de salida y deadline
+
+- Prioridad `2` configuración > `4` persistencia > `3` OCI > `5` Telegram. `6` concurrencia se devuelve solo, antes de leer estado. Todos los errores quedan en log.
+- Deadline global de 4 min, con los últimos 10 s reservados para persistir; 30 s por consulta OCI y 45 s por mensaje, siempre recortados por el tiempo restante. `TimeoutStartSec` de 5 min en systemd es del Hito 5.
 
 ## IAM y compartimentos
 

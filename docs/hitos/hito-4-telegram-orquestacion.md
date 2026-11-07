@@ -1,6 +1,6 @@
 # Hito 4 — Telegram y orquestación
 
-- [ ] **Hito 4 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
+- [x] **Hito 4 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
 
 > **Archivo autocontenido.** Incluye el contexto general y las secciones 0, 6 y 7.2 del roadmap. No necesitas abrir `Roadmap.md` para ejecutar este hito.
 > **Depende de:** [Hito 2](hito-2-persistencia-acumulacion.md) y [Hito 3](hito-3-alertas.md). **Habilita:** [Hito 5](hito-5-systemd-compilacion-documentacion.md).
@@ -148,47 +148,47 @@ Con `--dry-run`: se ejecutan los pasos de lectura y cálculo, pero no se escribe
 
 ## 6. Entregables
 
-- [ ] Paquete `internal/telegram` con timeouts, reintentos con backoff, tratamiento de HTTP 429 (`retry_after`), errores de red y protección del token.
-- [ ] Cola de notificaciones pendientes en `state.json`, máximo 50, caducidad 7 días, descarte del más antiguo y colapso por `(período, tipo)` al nivel más alto, registrando los umbrales cruzados.
-- [ ] Exclusión con `flock` no bloqueante para `run` y `--dry-run`, adquirida antes de leer el estado, con salida por ejecución concurrente si está ocupado.
-- [ ] Orquestación completa del comando `run` con los 13 pasos, incluido el vaciado de pendientes antes de evaluar alertas nuevas y la persistencia tras cada envío exitoso.
-- [ ] Fallo de OCI no aborta: se evalúa con los datos disponibles marcados incompletos, se envían pendientes y se registra el error. Si una VNIC falla y otras responden, la afectada queda `incomplete`, se continúa y se sale `3` con el total incompleto.
-- [ ] Comando `test-telegram` con mensaje de prueba explícito.
-- [ ] Alertas de error persistente (3 fallos, enfriamiento 24 h) y recuperación según la regla de enviada, en cola o nunca generada.
-- [ ] Mensajes en español con todos los campos exigidos y la nota de "tráfico registrado, no facturable"; la pendiente del mes anterior indica su período y que se generó antes.
-- [ ] Configuración por `--config` y variables `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`; códigos de salida 0/2/3/4/5/6 con prioridad 2 > 4 > 3 > 5 y todos los errores en log.
-- [ ] Deadline global de 4 min y `TimeoutStartSec` de 5 min; timeout por llamada menor y margen para persistir. Un `429` largo se encola y sale `5` sin que systemd mate el proceso.
-- [ ] `telegram.enabled=false` evalúa y registra, pero no encola, no envía pendientes ni marca como enviado; la caducidad de 7 días sigue aplicando a la cola existente; al habilitar se colapsa lo vigente y se emite una sola alerta con el nivel actual.
-- [ ] `status` muestra el mes anterior no finalizado como “no finalizado (en gracia)” con sus correcciones.
-- [ ] `last_visible` por VNIC y warning en la transición cuando una VNIC visible deja de aparecer; sin marcar buckets `incomplete`.
-- [ ] Tests con servidor HTTP simulado para errores, 429, timeouts y ausencia del token en logs.
-- [ ] Test de `run` de extremo a extremo con mocks, incluidos fallo de OCI, cola con pendientes y `--dry-run`.
-- [ ] `docs/progress.md` actualizado con resultados reales.
+- [x] Paquete `internal/telegram` con timeouts, reintentos con backoff, tratamiento de HTTP 429 (`retry_after`), errores de red y protección del token.
+- [x] Cola de notificaciones pendientes en `state.json`, máximo 50, caducidad 7 días, descarte del más antiguo y colapso por `(período, tipo)` al nivel más alto, registrando los umbrales cruzados.
+- [x] Exclusión con `flock` no bloqueante para `run` y `--dry-run`, adquirida antes de leer el estado, con salida por ejecución concurrente si está ocupado.
+- [x] Orquestación completa del comando `run` con los 13 pasos, incluido el vaciado de pendientes antes de evaluar alertas nuevas y la persistencia tras cada envío exitoso.
+- [x] Fallo de OCI no aborta: se evalúa con los datos disponibles marcados incompletos, se envían pendientes y se registra el error. Si una VNIC falla y otras responden, la afectada queda `incomplete`, se continúa y se sale `3` con el total incompleto.
+- [x] Comando `test-telegram` con mensaje de prueba explícito.
+- [x] Alertas de error persistente (3 fallos, enfriamiento 24 h) y recuperación según la regla de enviada, en cola o nunca generada.
+- [x] Mensajes en español con todos los campos exigidos y la nota de "tráfico registrado, no facturable"; la pendiente del mes anterior indica su período y que se generó antes.
+- [x] Configuración por `--config` y variables `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`; códigos de salida 0/2/3/4/5/6 con prioridad 2 > 4 > 3 > 5 y todos los errores en log.
+- [x] Deadline global de 4 min y `TimeoutStartSec` de 5 min; timeout por llamada menor y margen para persistir. Un `429` largo se encola y sale `5` sin que systemd mate el proceso.
+- [x] `telegram.enabled=false` evalúa y registra, pero no encola, no envía pendientes ni marca como enviado; la caducidad de 7 días sigue aplicando a la cola existente; al habilitar se colapsa lo vigente y se emite una sola alerta con el nivel actual.
+- [x] `status` muestra el mes anterior no finalizado como “no finalizado (en gracia)” con sus correcciones.
+- [x] `last_visible` por VNIC y warning en la transición cuando una VNIC visible deja de aparecer; sin marcar buckets `incomplete`.
+- [x] Tests con servidor HTTP simulado para errores, 429, timeouts y ausencia del token en logs.
+- [x] Test de `run` de extremo a extremo con mocks, incluidos fallo de OCI, cola con pendientes y `--dry-run`.
+- [x] `docs/progress.md` actualizado con resultados reales.
 
 ## 7. Criterio de cierre
 
-- [ ] Tests con servidor HTTP simulado cubren éxito, error HTTP, 429 con `retry_after`, timeout y error de red.
-- [ ] El token nunca aparece en logs, mensajes de error ni argumentos CLI (verificado por test).
-- [ ] El lock se adquiere antes de leer el estado y una segunda ejecución sale con código 6.
-- [ ] La cola de pendientes se vacía antes de evaluar alertas nuevas.
-- [ ] `state.json` se persiste tras cada envío exitoso, no solo al final.
-- [ ] Una notificación fallida permanece en la cola y se reintenta; una cola llena o caducada descarta la más antigua y lo registra.
-- [ ] Una notificación solo se marca enviada tras una respuesta exitosa.
-- [ ] Un fallo de OCI no aborta: se registra el error, se marcan los datos como incompletos y se envían los pendientes.
-- [ ] Si una VNIC falla y otras responden, la afectada queda `incomplete`, se continúa y se sale `3` con el total incompleto.
-- [ ] La alerta de error persistente se dispara a los 3 fallos; la recuperación sigue la regla: enviada, reemplazada en cola o solo log.
-- [ ] El colapso por `(período, tipo)` envía el 90 %, registra el 75 % y el 90 % como cruzados y no reenvía el 75 %.
-- [ ] Una notificación pendiente del mes anterior se envía con su período y el aviso de que se generó antes.
-- [ ] Los códigos de salida respetan la prioridad 2 > 4 > 3 > 5 y todos los errores quedan en log.
-- [ ] El deadline global es de 4 min y el `TimeoutStartSec` de 5 min; cada llamada tiene timeout menor.
-- [ ] Un `429` con `retry_after` largo se encola y sale `5` antes de superar el deadline global.
-- [ ] `telegram.enabled=false` no encola, no envía pendientes ni marca como enviado; la caducidad de 7 días sigue aplicando y al habilitar se colapsa lo vigente en una sola alerta.
-- [ ] `status` muestra el mes anterior no finalizado como “no finalizado (en gracia)” con sus correcciones.
-- [ ] `last_visible` se persiste y el warning de VNIC que deja de aparecer se emite en la transición.
-- [ ] `--dry-run` no escribe estado, no encola y no envía nada (verificado por test).
-- [ ] `run` de extremo a extremo con mocks produce el estado y las notificaciones esperadas.
-- [ ] `go build ./...`, `go vet ./...` y `go test ./...` ejecutados con resultado real reportado.
-- [ ] La casilla superior de este hito marcada solo después de todo lo anterior.
+- [x] Tests con servidor HTTP simulado cubren éxito, error HTTP, 429 con `retry_after`, timeout y error de red.
+- [x] El token nunca aparece en logs, mensajes de error ni argumentos CLI (verificado por test).
+- [x] El lock se adquiere antes de leer el estado y una segunda ejecución sale con código 6.
+- [x] La cola de pendientes se vacía antes de evaluar alertas nuevas.
+- [x] `state.json` se persiste tras cada envío exitoso, no solo al final.
+- [x] Una notificación fallida permanece en la cola y se reintenta; una cola llena o caducada descarta la más antigua y lo registra.
+- [x] Una notificación solo se marca enviada tras una respuesta exitosa.
+- [x] Un fallo de OCI no aborta: se registra el error, se marcan los datos como incompletos y se envían los pendientes.
+- [x] Si una VNIC falla y otras responden, la afectada queda `incomplete`, se continúa y se sale `3` con el total incompleto.
+- [x] La alerta de error persistente se dispara a los 3 fallos; la recuperación sigue la regla: enviada, reemplazada en cola o solo log.
+- [x] El colapso por `(período, tipo)` envía el 90 %, registra el 75 % y el 90 % como cruzados y no reenvía el 75 %.
+- [x] Una notificación pendiente del mes anterior se envía con su período y el aviso de que se generó antes.
+- [x] Los códigos de salida respetan la prioridad 2 > 4 > 3 > 5 y todos los errores quedan en log.
+- [x] El deadline global es de 4 min y el `TimeoutStartSec` de 5 min; cada llamada tiene timeout menor.
+- [x] Un `429` con `retry_after` largo se encola y sale `5` antes de superar el deadline global.
+- [x] `telegram.enabled=false` no encola, no envía pendientes ni marca como enviado; la caducidad de 7 días sigue aplicando y al habilitar se colapsa lo vigente en una sola alerta.
+- [x] `status` muestra el mes anterior no finalizado como “no finalizado (en gracia)” con sus correcciones.
+- [x] `last_visible` se persiste y el warning de VNIC que deja de aparecer se emite en la transición.
+- [x] `--dry-run` no escribe estado, no encola y no envía nada (verificado por test).
+- [x] `run` de extremo a extremo con mocks produce el estado y las notificaciones esperadas.
+- [x] `go build ./...`, `go vet ./...` y `go test ./...` ejecutados con resultado real reportado.
+- [x] La casilla superior de este hito marcada solo después de todo lo anterior.
 
 ## 8. Evidencia y traspaso
 
@@ -201,6 +201,17 @@ go test -race ./...
 ```
 
 Al cerrar, añade la entrada del Hito 4 en [`../progress.md`](../progress.md) con: qué se completó, qué quedó parcial, resultados reales, decisiones nuevas, supuestos pendientes de validación real y qué debe hacer la siguiente sesión.
+
+### Evidencia de cierre (2026-11-07)
+
+| Comando | Resultado |
+|---|---|
+| `go build ./...` | OK |
+| `go vet ./...` | OK |
+| `go test ./...` | OK (226 tests de nivel superior; 270 casos con subtests) |
+| `go test -race ./...` | OK |
+
+El envío real a Telegram, el `429` real y el timer systemd quedan fuera de este hito (sección 9) y pendientes de validación del usuario.
 
 ## 9. Fuera de alcance de este hito
 
