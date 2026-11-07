@@ -2,12 +2,12 @@
 
 Aplicación `oneshot` en Go para medir el tráfico de red saliente de una instancia de Oracle Cloud Infrastructure (OCI), acumular el consumo mensual y enviar alertas preventivas por Telegram. La v1 cubre solo red; CPU, RAM, disco, servicios Linux, respaldos y almacenamiento OCI quedan para fases posteriores.
 
-Este índice es el punto de entrada al plan de trabajo. El roadmap original se conserva intacto en [`Roadmap.md`](../Roadmap.md) como referencia; si hay contradicción, prevalece el roadmap y hay que corregir estos archivos.
+Este índice es el mapa de hitos y estado del proyecto. Para instalar u operar la aplicación, empieza por [`README.md`](../README.md). El roadmap original se conserva intacto en [`Roadmap.md`](../Roadmap.md) como referencia; si hay contradicción, prevalece el roadmap y hay que corregir estos archivos.
 
 ## Estado
 
-- **Implementación:** Hito 4 cerrado; `internal/config`, cliente OCI, `check`, `version`, persistencia, buckets horarios, `status`, evaluadores de alertas, `internal/telegram`, cola de pendientes, `run`, `--dry-run`, `test-telegram` y esquema `state.json` v3. Hito 5 no iniciado.
-- **Repositorio:** `go.mod` (`go 1.27.3`), `Roadmap.md` y git inicializado; aún no hay `README.md`.
+- **Implementación:** Hito 5 cerrado; v1 completa. `internal/config`, cliente OCI, `check`, `version`, persistencia, buckets horarios, `status`, evaluadores de alertas, `internal/telegram`, cola de pendientes, `run`, `--dry-run`, `test-telegram`, esquema `state.json` v3, unidades systemd, binarios y documentación de despliegue.
+- **Repositorio:** `go.mod` (`go 1.27.3`), `Roadmap.md`, `README.md`, `systemd/`, `dist/` (no versionado) y git inicializado. Hito 5 cerrado y commiteado; validaciones reales pendientes.
 - [x] Roadmap dividido en 5 hitos autocontenidos (2026-11-07).
 - [x] Índice de hitos con casillas de seguimiento.
 - [x] Plantillas [`progress.md`](progress.md) y [`decisions.md`](decisions.md) creadas.
@@ -18,6 +18,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 - [x] Hito 2 cerrado: `internal/persistence`, `internal/accumulate`, `app.Collect`, comando `status`, tests de duplicados, cambio de mes, finalización, correcciones, huecos, `no_data`, corrupción y concurrencia (2026-11-07).
 - [x] Hito 3 cerrado: `internal/alerts`, evaluadores de umbrales mensuales y de consumo anormal de 6 h, deduplicación, enfriamiento, avisos de datos incompletos/provisionales y esquema `state.json` v2 con migración desde v1 (2026-11-07).
 - [x] Hito 4 cerrado: `internal/telegram`, `internal/outbox`, `internal/logging`, ciclo completo de `run` con lock, cola, persistencia tras cada envío, error persistente y recuperación, `--dry-run`, `test-telegram`, mensajes en español y esquema v3 con migración desde v1/v2 (2026-11-07).
+- [x] Hito 5 cerrado: unidades systemd con timer de 6 h, binarios `linux/arm64` y `linux/amd64` verificados con `file`, `dist/SHA256SUMS`, `README.md`, `docs/deployment.md`, `docs/troubleshooting.md`, `docs/delivery.md`, reglas consolidadas en `architecture.md`, `decisions.md` reducido a porqués y `git tag roadmap-final` (2026-11-07).
 
 ## Cómo se usa este índice
 
@@ -42,7 +43,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 - [x] **[Hito 2 — Persistencia y acumulación](hitos/hito-2-persistencia-acumulacion.md).** Implementa `state.json`, historial mensual, buckets horarios, escritura atómica, bloqueo, corrupción y el comando `status`.
 - [x] **[Hito 3 — Alertas](hitos/hito-3-alertas.md).** Implementa umbrales mensuales y consumo anormal de 6 h, con deduplicación, enfriamiento y manejo de datos incompletos.
 - [x] **[Hito 4 — Telegram y orquestación](hitos/hito-4-telegram-orquestacion.md).** Implementa el cliente de Telegram, la cola de pendientes, el ciclo completo de `run`, `--dry-run` y `test-telegram`.
-- [ ] **[Hito 5 — systemd, compilación y documentación](hitos/hito-5-systemd-compilacion-documentacion.md).** Cierra con service/timer, binarios, checksums, documentación de despliegue y entrega final.
+- [x] **[Hito 5 — systemd, compilación y documentación](hitos/hito-5-systemd-compilacion-documentacion.md).** Cierra con service/timer, binarios, checksums, documentación de despliegue y entrega final.
 
 ## Mapa de hitos
 
@@ -68,10 +69,11 @@ Estos criterios aplican al proyecto completo, no a un hito aislado:
 - [ ] Pertenencia de la instancia al Dynamic Group verificada por el usuario.
 - [ ] Envío real a Telegram validado por el usuario.
 - [ ] Timer systemd ejecutado y verificado en el servidor por el usuario.
-- [ ] Binarios `linux/arm64` y `linux/amd64` generados y verificados con `file`.
-- [ ] `dist/SHA256SUMS` generado y comprobado.
-- [ ] Documentación final en español revisada: `README.md`, `architecture.md`, `oci-permissions.md`, `deployment.md`, `troubleshooting.md`.
-- [ ] Entrega final de la sección 11 completa.
+- [x] Binarios `linux/arm64` y `linux/amd64` generados y verificados con `file`.
+- [x] `dist/SHA256SUMS` generado y comprobado.
+- [x] Documentación final en español escrita y revisada por el agente: `README.md`, `architecture.md`, `oci-permissions.md`, `deployment.md`, `troubleshooting.md`, `delivery.md`.
+- [x] Entrega final de la sección 11 completa.
+- [x] Commit del Hito 5 realizado.
 
 ## Orden de ejecución
 
@@ -88,15 +90,19 @@ Hito 1 → Hito 2 → Hito 3 → Hito 4 → Hito 5
 
 | Documento | Uso |
 |---|---|
-| [`index.md`](index.md) | Este índice: estado resumido y enlaces. |
+| [`index.md`](index.md) | Este índice: mapa de hitos, estado resumido y enlaces. |
+| [`../README.md`](../README.md) | Entrada para instalar, configurar y operar la aplicación. |
 | [`progress.md`](progress.md) | Traspaso entre sesiones: qué se hizo, qué falta y evidencia real. |
-| [`decisions.md`](decisions.md) | Reglas vigentes y porqués. Al cerrar el Hito 5 queda como lista corta de porqués. |
-| [`architecture.md`](architecture.md) | Fuente canónica del ciclo de `run` y de las reglas vigentes al cierre. La investigación del Hito 1A ya está documentada. |
+| [`decisions.md`](decisions.md) | Lista corta de porqués; el detalle operativo vive en `architecture.md`. |
+| [`architecture.md`](architecture.md) | Fuente canónica del ciclo de `run`, las reglas vigentes y la operación systemd. |
 | [`oci-permissions.md`](oci-permissions.md) | Instance Principals, política restrictiva y verificación del Dynamic Group. |
-| [`hitos/`](hitos/) | Un archivo autocontenido por hito. |
-| [`../Roadmap.md`](../Roadmap.md) | Roadmap original, intacto hasta el cierre; antes de retirarlo se crea `git tag roadmap-final`. |
+| [`deployment.md`](deployment.md) | Instalación, actualización, desinstalación, permisos y SELinux en AlmaLinux 10.2 ARM64. |
+| [`troubleshooting.md`](troubleshooting.md) | Fallos esperables, códigos de salida y diagnóstico. |
+| [`delivery.md`](delivery.md) | Entrega final de la sección 11: artefactos, evidencia y pendientes reales. |
+| [`hitos/`](hitos/) | Un archivo autocontenido por hito (histórico). |
+| [`../Roadmap.md`](../Roadmap.md) | Roadmap original, intacto; el tag `roadmap-final` permite recuperarlo. |
 
-Documentos que se crearán durante los hitos: `deployment.md` y `troubleshooting.md` (Hito 5); `README.md` (Hito 5).
+Documentos creados en el Hito 5: [`../README.md`](../README.md), [`deployment.md`](deployment.md), [`troubleshooting.md`](troubleshooting.md) y [`delivery.md`](delivery.md).
 
 ## Contratos cerrados
 
@@ -116,11 +122,11 @@ Resumen de lo acordado con el autor del roadmap (detalle en [`decisions.md`](dec
 - **Telegram con `enabled=false`:** evalúa y registra, pero no encola, no envía pendientes ni marca como enviado. La caducidad de 7 días sigue aplicando a la cola existente; al habilitar se colapsa lo vigente y se emite una sola alerta con el nivel actual.
 - **Fallo parcial de VNIC:** la afectada queda `incomplete`, se continúa con las demás y se sale `3` con el total incompleto.
 - **Telegram (transporte):** API oficial con `net/http`; credenciales en `telegram.env` con permisos `0600`; timeout por intento, 3 intentos con backoff, `429` con `retry_after` y redacción del token en errores y logs. Un `429` que no cabe en el deadline deja la cola persistida y sale `5`.
-- **Entrada y git:** `docs/index.md` hasta el README del Hito 5; `git init` y commit por hito.
+- **Entrada y git:** `README.md` es la entrada desde el Hito 5; `docs/index.md` queda como mapa de hitos. `git init` y un commit por hito; el Hito 5 se commitea al cerrar.
 
 ## Validación real pendiente
 
-Los hitos 1, 2, 3 y 4 cerraron con tests y mocks (incluido un servidor HTTP simulado para Telegram). Quedan para después del despliegue: `check` contra OCI real, pertenencia al Dynamic Group, política restrictiva, publicación de ceros, semántica delta/`sum()`, latencia real, formato real de los timestamps agregados, envío real a Telegram, `429` real, permisos reales de `telegram.env` y el timer systemd. La lista viva está en [`progress.md`](progress.md).
+Los hitos 1–5 cerraron con tests, mocks y un servidor HTTP simulado para Telegram; el Hito 5 añadió la validación estática de systemd y los binarios. No se ha ejecutado nada contra OCI, Telegram ni el servidor real. Quedan para después del despliegue: `check` contra OCI, pertenencia al Dynamic Group, política restrictiva, publicación de ceros, semántica delta/`sum()`, latencia real, formato real de los timestamps agregados, envío real a Telegram, `429` real, permisos reales de `telegram.env`, SELinux, ejecución del binario ARM64, endurecimiento systemd y el timer. La lista viva está en [`progress.md`](progress.md).
 
 ## Detalles menores por decidir en implementación
 
@@ -129,7 +135,7 @@ Los hitos 1, 2, 3 y 4 cerraron con tests y mocks (incluido un servidor HTTP simu
 
 ## Decisión sobre el roadmap original
 
-`Roadmap.md` se conserva intacto durante la implementación. Al cerrar el Hito 5, antes de retirar el roadmap y los hitos, se crea `git tag roadmap-final` para conservarlos. Hasta entonces, la entrada es [`index.md`](index.md).
+`Roadmap.md` se conserva intacto. En el cierre del Hito 5 se creó `git tag roadmap-final` antes de que el equipo decida retirar el roadmap o los hitos; retirarlos no forma parte de este cierre. El tag `roadmap-final` se recrea sobre el commit del cierre (`git tag -f -a roadmap-final -m "Roadmap y docs/hitos del cierre de la v1"`) antes de retirar cualquier archivo. La entrada operativa es [`../README.md`](../README.md) y el mapa de hitos sigue en este índice.
 
 ## Verificación rápida
 
@@ -139,4 +145,8 @@ go build ./...
 go vet ./...
 go test ./...
 go test -race ./...
+
+sha256sum -c dist/SHA256SUMS
+file dist/oci-infrastructure-monitor-linux-*
+systemd-analyze verify systemd/oci-infrastructure-monitor.timer
 ```

@@ -6,11 +6,11 @@
 
 | Campo | Valor |
 |---|---|
-| Hito en curso | Hito 5 — no iniciado |
-| Último hito cerrado | Hito 4 — 2026-11-07 |
-| Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test`, `go test -race` y conteo de tests |
-| Resultado de la verificación | OK en 226 tests de nivel superior (270 casos con subtests) en `cmd/monitor`, `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/alerts`, `internal/app`, `internal/telegram`, `internal/outbox` y `internal/logging`; `internal/oci` sin tests propios |
-| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram real, `429` real, timer systemd, `status` con estado real, publicación de ceros y umbrales de alerta con tráfico real |
+| Hito en curso | Hito 5 — cerrado y commiteado; validaciones reales pendientes |
+| Último hito cerrado | Hito 5 — 2026-11-07 |
+| Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test`, `go test -race`, `file`, `sha256sum -c` y `systemd-analyze` |
+| Resultado de la verificación | OK: 228 tests de nivel superior (272 casos con subtests) en 10 paquetes (9 con tests; `internal/oci` sin tests propios); `-race` en verde con `GOCACHE` local; ambos binarios verificados con `file`; checksums OK; unidades systemd válidas y con exposición `1.6 OK` |
+| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram real, `429` real, timer systemd, SELinux, permisos del usuario del servicio, ejecución del binario ARM64, endurecimiento systemd y `status` con estado real |
 
 ## Plantilla de cierre de hito
 
@@ -318,6 +318,120 @@ Todas en `docs/decisions.md`.
 - Implementar el Hito 5: unidad systemd con `TimeoutStartSec=5min`, timer, binarios `linux/arm64` y `linux/amd64`, `dist/SHA256SUMS`, `README.md`, `deployment.md`, `troubleshooting.md` y entrega final.
 - No reabrir los hitos 1–4; las validaciones reales quedan para el responsable del proyecto tras el despliegue.
 
+### 2026-11-07 — Hito 5 cerrado
+
+**Completado**
+
+- `systemd/oci-infrastructure-monitor.service`: `Type=oneshot`, usuario/group `oci-monitor`, `EnvironmentFile` opcional, `StateDirectory` con `0700`, journald, `TimeoutStartSec=5min` y `TimeoutStopSec=20s`, `UMask=0077` y endurecimiento (`NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, `ProtectKernel*`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `RestrictAddressFamilies`, `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`, `MemoryDenyWriteExecute`, `SystemCallArchitectures=native`, `SystemCallFilter=@system-service`, capacidades vacías). Sin `PrivateNetwork` ni `IPAddressDeny`, para no bloquear `169.254.169.254`, OCI ni Telegram. Sin `[Install]`: solo se habilita el timer.
+- `systemd/oci-infrastructure-monitor.timer`: `OnCalendar=*-*-* 00/6:00:00` (00, 06, 12, 18), `RandomizedDelaySec=15min`, `AccuracySec=1min`, `Persistent=true`, `WantedBy=timers.target`.
+- Binarios estáticos `dist/oci-infrastructure-monitor-linux-arm64` (7,4 MiB) y `dist/oci-infrastructure-monitor-linux-amd64` (8,0 MiB), compilados con `CGO_ENABLED=0`, `-trimpath` y `-ldflags "-s -w -X main.version=1.0.0 -X main.commit=8b0fce2 -X main.buildDate=2026-11-07T22:15:20Z"`. Verificados con `file` y con `version` (amd64).
+- `dist/SHA256SUMS` con las dos líneas y `sha256sum -c` en verde:
+
+  ```text
+  4c101e640b661715e0c72d561252ee31189d0390ab1dcced3a81c227ed769260  dist/oci-infrastructure-monitor-linux-arm64
+  4dfef6b99ba503de2dac623b8cd5cdbc3d8d5b407d459100c1bb28b253e06ac9  dist/oci-infrastructure-monitor-linux-amd64
+  ```
+
+- `README.md` en español: objetivo, advertencia de tráfico registrado no facturable, requisitos, instalación rápida, tabla de configuración con defaults, contrato de `telegram.env`, CLI, códigos de salida, operación, estructura, desarrollo, dependencias, seguridad y limitaciones.
+- `docs/deployment.md`: usuario y directorios, binario y checksum, `config.json`, `telegram.env` (`0600 oci-monitor:oci-monitor`, legible por el servicio porque la app también lo abre), unidades systemd, SELinux (`bin_t`/`etc_t`/`var_lib_t`, `semanage fcontext`, `ausearch`/`audit2why`), verificación manual, timer, red, actualización, desinstalación y checklist para AlmaLinux 10.2 ARM64.
+- `docs/troubleshooting.md`: códigos `0/2/3/4/5/6`, configuración, OCI, persistencia, Telegram, concurrencia, calidad de datos, timer, SELinux, endurecimiento, duplicados, totales sospechosos, reinicio limpio y comandos para pedir ayuda.
+- `docs/delivery.md`: entrega final de la sección 11 con arquitectura, estructura, funcionalidades, evidencia real, binarios y checksums, dependencias, limitaciones, IAM, pasos manuales y resumen de decisiones.
+- `docs/architecture.md`: nueva sección «systemd, compilación y operación (Hito 5)» con rutas, directivas de la unidad, restricción deliberada de no filtrar red, timer, compilación y operación; riesgos actualizados.
+- `docs/decisions.md` reducido a una lista corta de porqués con enlaces a `architecture.md`.
+- `docs/index.md`, `docs/hitos/hito-5-…` y este archivo actualizados con el cierre. El tag `roadmap-final` se recrea sobre el commit del cierre antes de cualquier retirada; conserva `Roadmap.md` y `docs/hitos/` para el caso de que el equipo decida retirarlos.
+
+**Parcial o pendiente**
+
+- **Commit del Hito 5 realizado.** El tag `roadmap-final` se recrea sobre ese commit antes de retirar `Roadmap.md` o `docs/hitos/`.
+- Validaciones reales: `check` contra OCI, Dynamic Group, política restrictiva, envío real a Telegram, `429` real, timer real, SELinux, permisos efectivos de `oci-monitor`, ejecución del binario ARM64 y comportamiento del endurecimiento systemd en el servidor.
+- El endurecimiento se validó con `systemd-analyze verify` y `systemd-analyze security --offline` (exposición `1.6 OK`), pero no se arrancó la unidad en un host real. `MemoryDenyWriteExecute` y `@system-service` son los puntos a vigilar si una versión futura cambia syscalls.
+- El binario `linux/arm64` no se ejecutó en un host ARM64 desde este entorno; `file` confirma la arquitectura y el checksum cubre la integridad.
+- El `GOCACHE` por defecto de esta máquina está en una ruta de solo lectura para el sandbox. `go test -race` falla al inicializar la caché (`failed to initialize build cache …: permission denied` en un directorio sin escritura) o, con una caché existente en un sistema de archivos de solo lectura, con el mensaje engañoso `runtime/race: package …: cannot find package`; con `GOCACHE="$PWD/.tmp/gocache"` pasa desde caché vacía. Es un artefacto del entorno, documentado en el README.
+
+**Verificación ejecutada**
+
+| Comando | Resultado | Fecha |
+|---|---|---|
+| `go version` | `go1.27.3 linux/amd64` | 2026-11-07 |
+| `go build ./...` | OK (caché local vacía) | 2026-11-07 |
+| `go vet ./...` | OK, sin advertencias | 2026-11-07 |
+| `go test ./...` | OK; 228 tests de nivel superior, 272 casos con subtests; 9 paquetes con tests y `internal/oci` sin tests propios | 2026-11-07 |
+| `go test -race ./...` | OK con `GOCACHE` local (20 s desde caché vacía) | 2026-11-07 |
+| `systemd-analyze verify` (service) | Exit 0 sobre una copia de la unidad con `ExecStart` apuntando a `dist/oci-infrastructure-monitor-linux-amd64`; en un checkout limpio falla con `Command … is not executable` porque el binario instalado no existe | 2026-11-07 |
+| `systemd-analyze verify` (timer) | Exit 0 | 2026-11-07 |
+| `systemd-analyze calendar '*-*-* 00/6:00:00'` | Normaliza a `*-*-* 00/6:00:00` y el próximo disparo es 18:00 (00/06/12/18, cada 6 h) | 2026-11-07 |
+| `systemd-analyze security --offline` | Exposición `1.6 OK` | 2026-11-07 |
+| `file dist/oci-infrastructure-monitor-linux-arm64` | `ELF 64-bit LSB executable, ARM aarch64, statically linked, stripped` | 2026-11-07 |
+| `file dist/oci-infrastructure-monitor-linux-amd64` | `ELF 64-bit LSB executable, x86-64, statically linked, stripped` | 2026-11-07 |
+| `sha256sum -c dist/SHA256SUMS` | Ambas sumas coinciden | 2026-11-07 |
+| `dist/…-amd64 version` | `1.0.0`, commit `8b0fce2`, built `2026-11-07T22:15:20Z`, `linux/amd64` | 2026-11-07 |
+| Prueba de humo del binario amd64 | `version`/`--help` → `0`; sin argumentos → `2`; `status` sin estado → `0`; `run` y `run --dry-run` con `network.enabled=false` → `0`; configuración con campo desconocido → `2`; `--dry-run` creó directorio, `history/` y `lock`, no `state.json` | 2026-11-07 |
+
+**Decisiones nuevas**
+
+- systemd: usuario dedicado, `StateDirectory`, journald, `TimeoutStartSec=5min` y endurecimiento sin `PrivateNetwork`/`IPAddressDeny` para no bloquear metadatos, OCI ni Telegram; solo se habilita el timer.
+- Timer de 6 h con `Persistent=true` y hasta 15 min de retardo aleatorio.
+- `telegram.env` debe ser `0600` y pertenecer a `oci-monitor`, porque la aplicación abre el archivo además de recibirlo por `EnvironmentFile`.
+- Compilación estática cruzada con `-trimpath` y `-ldflags` de versión/commit/fecha; `dist/` fuera de git.
+- Cierre documental: reglas en `architecture.md`, `decisions.md` como lista de porqués, tag `roadmap-final` antes de cualquier retirada.
+
+Todas en `docs/decisions.md`.
+
+**Supuestos pendientes de validar en producción**
+
+- Que el endurecimiento (`@system-service`, `MemoryDenyWriteExecute`, `ProtectSystem=strict`) no bloquee ninguna operación real del binario.
+- Que los contextos SELinux `bin_t`/`etc_t`/`var_lib_t` sean los efectivos y no aparezcan AVC.
+- Que `oci-monitor` pueda leer `config.json` y `telegram.env` y escribir en `/var/lib/oci-infrastructure-monitor` con el `0700` aplicado por systemd.
+- Que el timer dispare a las 00/06/12/18 con el retardo aleatorio y recupere ejecuciones perdidas.
+- Que `TimeoutStartSec=5min` sea suficiente con la latencia real de OCI y Telegram.
+- Que el binario ARM64 arranque y ejecute `version`/`check` en la instancia.
+
+**Para la siguiente sesión**
+
+- Revisar el diff completo del Hito 5 y ejecutar `go build ./...`, `go vet ./...`, `go test ./...`, `go test -race ./...`, `sha256sum -c dist/SHA256SUMS` y `systemd-analyze verify` sobre una copia de la unidad con `ExecStart` apuntando al binario local (el `ExecStart` instalado no existe en el entorno de desarrollo).
+- El cierre está commiteado; el tag `roadmap-final` se recrea sobre ese commit antes de retirar `Roadmap.md` o `docs/hitos/`.
+- Desplegar siguiendo `docs/deployment.md` y completar las validaciones reales de `docs/progress.md`.
+
+### 2026-11-07 — Correcciones de auditoría antes del commit
+
+**Hallazgos validados**
+
+1. **`test-telegram` movía un corrupto.** Confirmado y reproducido: con `state.json` corrupto, `BuildStatus` usaba `LoadState()`/`LoadHistory()` con `Quarantine:true` y movía el archivo a `state.json.corrupt-…` antes de intentar enviar; el comando salía `5`. Corregido: `test-telegram` usa `BuildStatusWithOptions(..., LoadOptions{Quarantine:false})`; `status` conserva la cuarentena y su contrato.
+2. **`TimeoutStopSec=20s`.** La afirmación “no interrumpe una escritura atómica” era demasiado fuerte: no hay `signal.Notify`, así que `SIGTERM` termina el proceso y `TimeoutStopSec` solo limita la espera antes de `SIGKILL`. Corregida la tabla y el comentario de la unidad; se mantiene `20s` porque `5min` no garantiza terminar la ejecución sin manejo de señal.
+3. **Mensaje de `GOCACHE`.** La documentación solo citaba `cannot find package`. Reproducidos los dos casos: `failed to initialize build cache …: permission denied` con un directorio sin escritura y `runtime/race: package …: cannot find package` con una caché existente en un sistema de archivos de solo lectura. Corregidos README, delivery y progress.
+4. **Tag `roadmap-final`.** Al cerrar el Hito 5 se recrea sobre el commit del cierre con `git tag -f -a roadmap-final -m "Roadmap y docs/hitos del cierre de la v1"` antes de retirar el roadmap o los hitos.
+5. **`systemd-analyze verify` del service.** En checkout limpio falla con `Command /usr/local/bin/oci-infrastructure-monitor is not executable`; la guía lo ejecuta después de instalar el binario. La evidencia ahora indica que se validó sobre una copia con `ExecStart` al binario de `dist/` y la guía lo aclara.
+6. **“10 paquetes” en `delivery.md`.** Corregido: 9 paquetes con tests e `internal/oci` sin tests propios.
+7. **`jq` sin requisito.** Añadido a los requisitos de despliegue (`curl` y `jq`, con `sudo dnf install -y curl jq` si faltan); la aplicación no los necesita en ejecución. Nota equivalente en `oci-permissions.md`.
+8. **Falso positivo del token vacío.** `grep -qF ""` devuelve `0`; el bloque de `troubleshooting.md` ahora comprueba que `TOKEN` no esté vacío y usa `grep -qF -- "$TOKEN"`.
+9. **Casillas del Hito 5 antes del commit.** Se añadió una nota de estado al archivo del hito: entregables y criterios verificados, cierre registrado en el commit del Hito 5. Las casillas reflejan la implementación y la verificación.
+
+**Cambios de código y tests**
+
+- `internal/app/status.go`: nuevo `BuildStatusWithOptions`; `BuildStatus` sigue leyendo con cuarentena.
+- `cmd/monitor/main.go`: `test-telegram` lee sin cuarentena.
+- Tests nuevos: `TestBuildStatusWithOptionsDoesNotQuarantine` y `TestTestTelegramCommandDoesNotQuarantineCorruptState`. `TestBuildStatusCorruptStateStillShowsHistory` ahora verifica que `BuildStatus` sí mueve el corrupto por defecto.
+- Decisión nueva registrada en `decisions.md`: `test-telegram` y `run --dry-run` leen sin cuarentena; `status` y `run` real sí la aplican.
+- Binarios y checksums regenerados: `built 2026-11-07T22:15:20Z`, `228` tests de nivel superior (`272` con subtests), `12 672` líneas de Go contando tests.
+
+**Verificación ejecutada**
+
+| Comando | Resultado | Fecha |
+|---|---|---|
+| `go build ./...` | OK | 2026-11-07 |
+| `go vet ./...` | OK | 2026-11-07 |
+| `go test ./...` | OK; 228 tests de nivel superior, 272 con subtests | 2026-11-07 |
+| `go test -race ./...` | OK con `GOCACHE` local | 2026-11-07 |
+| `sha256sum -c dist/SHA256SUMS` | Ambas sumas coinciden | 2026-11-07 |
+| `file` y `version` | `aarch64`/`x86-64`, `1.0.0`, `8b0fce2`, `2026-11-07T22:15:20Z` | 2026-11-07 |
+| `test-telegram` con `state.json` corrupto (binario nuevo) | Exit `5` por token inválido; `state.json` intacto y sin `*.corrupt-*` | 2026-11-07 |
+| `systemd-analyze verify` / `security` | Exit 0 sobre copia con `ExecStart` al binario local / exposición `1.6 OK` | 2026-11-07 |
+| Enlaces y anclas | OK | 2026-11-07 |
+
+**Pendiente**
+
+- Validaciones reales de siempre: OCI, Dynamic Group, Telegram, `429`, timer, SELinux, permisos y ARM64.
+
 ## Validaciones pendientes del Hito 3
 
 - [ ] Ajustar `high_traffic_6h_gib` y `high_traffic_cooldown_hours` con el tráfico real de la instancia.
@@ -351,5 +465,11 @@ Estas comprobaciones no pueden hacerse desde el entorno de desarrollo y las vali
 - [ ] `oci-infrastructure-monitor check` contra OCI real.
 - [ ] Pertenencia de la instancia al Dynamic Group `Default/BackupInstances`.
 - [ ] Envío real a Telegram.
-- [ ] Ejecución real del timer systemd.
-- [ ] Comportamiento de SELinux con el binario y los directorios de estado.
+- [ ] Recepción de un `429` real y respeto de `retry_after`.
+- [ ] Ejecución real del timer systemd (00/06/12/18 y `Persistent=true`).
+- [ ] Comportamiento de SELinux con el binario y los directorios de estado (`bin_t`, `etc_t`, `var_lib_t`; sin AVC).
+- [ ] Permisos efectivos de `oci-monitor` sobre `config.json`, `telegram.env` y `/var/lib/oci-infrastructure-monitor`.
+- [ ] Arranque del binario `linux/arm64` en la instancia y `version`/`check` reales.
+- [ ] Compatibilidad del endurecimiento systemd (`@system-service`, `MemoryDenyWriteExecute`, `ProtectSystem=strict`) con el binario.
+- [ ] Ajuste de `publication_latency_hours`, umbrales y enfriamientos con tráfico real.
+- [ ] Confirmación empírica de la publicación de ceros y activación de `PublishZeros` si corresponde.

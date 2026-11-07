@@ -1,6 +1,8 @@
 # Hito 5 — systemd, compilación y documentación
 
-- [ ] **Hito 5 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
+- [x] **Hito 5 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
+
+> **Estado del cierre:** entregables y criterios verificados. El cierre se registra en el commit del Hito 5; las casillas reflejan la implementación y la verificación.
 
 > **Archivo autocontenido.** Incluye el contexto general y las secciones 0, 7.3, 9, 10 y 11 del roadmap. No necesitas abrir `Roadmap.md` para ejecutar este hito.
 > **Depende de:** Hitos [1](hito-1-investigacion-configuracion-cliente-oci.md), [2](hito-2-persistencia-acumulacion.md), [3](hito-3-alertas.md) y [4](hito-4-telegram-orquestacion.md). **Cierra:** el proyecto.
@@ -145,30 +147,30 @@ git tag roadmap-final
 
 ## 7. Entregables
 
-- [ ] `systemd/oci-infrastructure-monitor.service` con `Type=oneshot`, usuario dedicado, `EnvironmentFile`, `StateDirectory`, journald, `TimeoutStartSec=5min` y endurecimiento compatible con `169.254.169.254`.
-- [ ] `systemd/oci-infrastructure-monitor.timer` cada 6 horas, `Persistent=true` y `RandomizedDelaySec` razonable.
-- [ ] Binarios `linux/arm64` y `linux/amd64` en `dist/`, verificados con `file`.
-- [ ] `dist/SHA256SUMS` generado y comprobado.
-- [ ] `README.md` en español con el objetivo, la advertencia de "tráfico registrado no facturable", la estructura, la configuración, el CLI y los códigos de salida.
-- [ ] `docs/architecture.md` completo y coherente con la implementación final.
-- [ ] `docs/oci-permissions.md` con la política restrictiva propuesta y la verificación manual del Dynamic Group.
-- [ ] `docs/deployment.md` en español con comandos exactos para AlmaLinux 10.2 ARM64: usuario dedicado, directorios, permisos (incluido `telegram.env`), SELinux (contextos de `/var/lib`, `/etc` y del binario), instalación, actualización, desinstalación y verificación manual.
-- [ ] `docs/troubleshooting.md` en español con los fallos esperables y su diagnóstico.
-- [ ] Cierre documental: reglas vigentes consolidadas en `docs/architecture.md`, `docs/decisions.md` reducido a porqués y `git tag roadmap-final` creado antes de retirar el roadmap o los hitos.
-- [ ] Entrega final de la sección 5 de este archivo.
-- [ ] `docs/progress.md` actualizado con los resultados reales del cierre.
+- [x] `systemd/oci-infrastructure-monitor.service` con `Type=oneshot`, usuario dedicado, `EnvironmentFile`, `StateDirectory`, journald, `TimeoutStartSec=5min` y endurecimiento compatible con `169.254.169.254`.
+- [x] `systemd/oci-infrastructure-monitor.timer` cada 6 horas, `Persistent=true` y `RandomizedDelaySec` razonable.
+- [x] Binarios `linux/arm64` y `linux/amd64` en `dist/`, verificados con `file`.
+- [x] `dist/SHA256SUMS` generado y comprobado.
+- [x] `README.md` en español con el objetivo, la advertencia de "tráfico registrado no facturable", la estructura, la configuración, el CLI y los códigos de salida.
+- [x] `docs/architecture.md` completo y coherente con la implementación final.
+- [x] `docs/oci-permissions.md` con la política restrictiva propuesta y la verificación manual del Dynamic Group.
+- [x] `docs/deployment.md` en español con comandos exactos para AlmaLinux 10.2 ARM64: usuario dedicado, directorios, permisos (incluido `telegram.env`), SELinux (contextos de `/var/lib`, `/etc` y del binario), instalación, actualización, desinstalación y verificación manual.
+- [x] `docs/troubleshooting.md` en español con los fallos esperables y su diagnóstico.
+- [x] Cierre documental: reglas vigentes consolidadas en `docs/architecture.md`, `docs/decisions.md` reducido a porqués y `git tag roadmap-final` creado antes de retirar el roadmap o los hitos.
+- [x] Entrega final de la sección 5 de este archivo.
+- [x] `docs/progress.md` actualizado con los resultados reales del cierre.
 
 ## 8. Criterio de cierre
 
-- [ ] `go test ./...`, `go test -race ./...` y `go vet ./...` ejecutados con resultado real reportado.
-- [ ] Binarios generados para `linux/arm64` y `linux/amd64`; `file` confirma la arquitectura de cada uno.
-- [ ] `dist/SHA256SUMS` verificado.
-- [ ] Las unidades systemd tienen sintaxis válida y no bloquean el servicio de metadatos de OCI (revisión documentada; si hay herramienta de validación, ejecutada).
-- [ ] La documentación de despliegue cubre instalación, actualización, desinstalación, permisos, SELinux y verificación del Dynamic Group.
-- [ ] Las reglas vigentes están en `docs/architecture.md` y `docs/decisions.md` quedó como lista de porqués.
-- [ ] `git tag roadmap-final` existe antes de retirar `Roadmap.md` o `docs/hitos/`.
-- [ ] La entrega final de la sección 11 está completa y separa claramente lo probado con mocks de lo pendiente de validación real.
-- [ ] La casilla superior de este hito marcada solo después de todo lo anterior.
+- [x] `go test ./...`, `go test -race ./...` y `go vet ./...` ejecutados con resultado real reportado.
+- [x] Binarios generados para `linux/arm64` y `linux/amd64`; `file` confirma la arquitectura de cada uno.
+- [x] `dist/SHA256SUMS` verificado.
+- [x] Las unidades systemd tienen sintaxis válida y no bloquean el servicio de metadatos de OCI (revisión documentada; si hay herramienta de validación, ejecutada).
+- [x] La documentación de despliegue cubre instalación, actualización, desinstalación, permisos, SELinux y verificación del Dynamic Group.
+- [x] Las reglas vigentes están en `docs/architecture.md` y `docs/decisions.md` quedó como lista de porqués.
+- [x] `git tag roadmap-final` existe antes de retirar `Roadmap.md` o `docs/hitos/`.
+- [x] La entrega final de la sección 11 está completa y separa claramente lo probado con mocks de lo pendiente de validación real.
+- [x] La casilla superior de este hito marcada solo después de todo lo anterior.
 
 ## 9. Evidencia y cierre del proyecto
 
