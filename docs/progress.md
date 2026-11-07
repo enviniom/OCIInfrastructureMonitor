@@ -6,10 +6,10 @@
 
 | Campo | Valor |
 |---|---|
-| Hito en curso | Hito 1 — 1A y 1B completados; 1C (cliente OCI, `check`, `version`) pendiente |
-| Último hito cerrado | — |
+| Hito en curso | Hito 2 — no iniciado |
+| Último hito cerrado | Hito 1 — 2026-11-07 |
 | Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test` y `go test -race` |
-| Resultado de la verificación | OK en `internal/config`; aún no hay cliente OCI |
+| Resultado de la verificación | OK en `internal/config`, `internal/app`, `internal/oci` (sin tests propios) y `cmd/monitor` |
 | Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram, timer systemd |
 
 ## Plantilla de cierre de hito
@@ -123,6 +123,40 @@ Copiar este bloque al cerrar cada hito y rellenarlo con datos reales:
 
 - Implementar 1C: interfaz `internal/oci`, cliente de Monitoring con Instance Principals y mock, `check` y `version`.
 - No cerrar el Hito 1 hasta que `check` no escriba estado y los tests del cliente estén en verde.
+
+### 2026-11-07 — Hito 1 cerrado
+
+**Completado**
+
+- `internal/oci`: interfaz `Client`, `RealClient` con Instance Principals, consultas agregadas y paginación de `ListMetrics`.
+- `internal/app`: `Check` de solo lectura, con estados visible / no visible y sin escritura de estado.
+- `cmd/monitor`: comandos `check` y `version`, códigos `0/2/3`, salida del warning de VNIC no visible.
+- Tests de configuración, `Check` con mock y formato de salida; `go build`, `go vet`, `go test` y `go test -race` en verde.
+- Documentación de arquitectura, permisos, configuración y decisiones.
+
+**Verificación ejecutada**
+
+| Comando | Resultado | Fecha |
+|---|---|---|
+| `go build ./...` | OK | 2026-11-07 |
+| `go vet ./...` | OK | 2026-11-07 |
+| `go test ./...` | OK (`internal/config`, `internal/app`, `cmd/monitor`) | 2026-11-07 |
+| `go test -race ./...` | OK | 2026-11-07 |
+
+**Pendiente de validación real**
+
+- `check` contra OCI real, pertenencia al Dynamic Group y política restrictiva en el compartimento de la subred.
+- Publicación de ceros, semántica delta/`sum()` y latencia real de publicación.
+- Comportamiento de `ListMetrics` con una VNIC sin actividad.
+
+**Decisiones nuevas**
+
+- Compartimento único de subred para las VNIC de la v1.
+- Ventana de publicación provisional de 2 h.
+
+**Para la siguiente sesión**
+
+- Hito 2: persistencia, buckets horarios, cierre de mes, `status` y recuperación.
 
 ## Validaciones pendientes del Hito 1
 

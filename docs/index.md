@@ -6,7 +6,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 
 ## Estado
 
-- **Implementación:** iniciada; `internal/config` y `configs/config.example.json` listos. Cliente OCI, `check` y `version` pendientes.
+- **Implementación:** Hito 1 cerrado; `internal/config`, cliente OCI, `check` y `version` listos. Hito 2 no iniciado.
 - **Repositorio:** `go.mod` (`go 1.27.3`), `Roadmap.md` y git inicializado; aún no hay `README.md`.
 - [x] Roadmap dividido en 5 hitos autocontenidos (2026-11-07).
 - [x] Índice de hitos con casillas de seguimiento.
@@ -14,6 +14,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 - [x] Contratos iniciales de diseño cerrados con el autor del roadmap (2026-11-07).
 - [x] Hito 1A: investigación de OCI Monitoring y permisos documentada (2026-11-07). Ver [`architecture.md`](architecture.md) y [`oci-permissions.md`](oci-permissions.md).
 - [x] Hito 1B: configuración estricta, ejemplo y tests de `internal/config` (2026-11-07).
+- [x] Hito 1 cerrado: cliente OCI, `check`, `version`, tests con mocks y `go test -race` (2026-11-07).
 
 ## Cómo se usa este índice
 
@@ -34,7 +35,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 
 ## Hitos
 
-- [ ] **[Hito 1 — Investigación, configuración y cliente OCI](hitos/hito-1-investigacion-configuracion-cliente-oci.md).** Documenta unidades, semántica, agregación y límites de OCI Monitoring; implementa `config`, el cliente de Monitoring con Instance Principals, `check` y `version`.
+- [x] **[Hito 1 — Investigación, configuración y cliente OCI](hitos/hito-1-investigacion-configuracion-cliente-oci.md).** Documenta unidades, semántica, agregación y límites de OCI Monitoring; implementa `config`, el cliente de Monitoring con Instance Principals, `check` y `version`.
 - [ ] **[Hito 2 — Persistencia y acumulación](hitos/hito-2-persistencia-acumulacion.md).** Implementa `state.json`, historial mensual, buckets horarios, escritura atómica, bloqueo, corrupción y el comando `status`.
 - [ ] **[Hito 3 — Alertas](hitos/hito-3-alertas.md).** Implementa umbrales mensuales y consumo anormal de 6 h, con deduplicación, enfriamiento y manejo de datos incompletos.
 - [ ] **[Hito 4 — Telegram y orquestación](hitos/hito-4-telegram-orquestacion.md).** Implementa el cliente de Telegram, la cola de pendientes, el ciclo completo de `run`, `--dry-run` y `test-telegram`.
@@ -112,15 +113,15 @@ Resumen de lo acordado con el autor del roadmap (detalle en [`decisions.md`](dec
 - **Fallo parcial de VNIC:** la afectada queda `incomplete`, se continúa con las demás y se sale `3` con el total incompleto.
 - **Entrada y git:** `docs/index.md` hasta el README del Hito 5; `git init` y commit por hito.
 
-## Verificaciones pendientes (Hito 1)
+## Validación real pendiente
 
-La lista de comprobaciones vive en [`progress.md`](progress.md#validaciones-pendientes-del-hito-1): publicación de ceros, `ListMetrics`, `resourceId`, cobertura de `read metrics` y ventana de actividad.
+El Hito 1 cerró con tests y mocks. Quedan para después del despliegue: `check` contra OCI real, pertenencia al Dynamic Group, política restrictiva, publicación de ceros, semántica delta/`sum()` y latencia real. La lista viva está en [`progress.md`](progress.md#validaciones-pendientes-del-hito-1).
 
 ## Detalles menores por decidir en implementación
 
 - Formato de salida de `status` (texto para humanos; un flag JSON queda para el futuro).
 - Cómo se persiste la marca de “mes finalizado” en `state.json` o en el historial.
-- Redacción exacta de los mensajes de `check` y de la alerta pendiente del mes anterior.
+- Redacción exacta de la alerta pendiente del mes anterior.
 
 ## Decisión sobre el roadmap original
 

@@ -14,6 +14,12 @@
 - **Motivo:** si OCI omite ceros, una VNIC inactiva no tiene datapoints; marcarla incompleta para siempre sería un falso positivo. Pero una VNIC que nunca aparece puede ser un OCID mal escrito, y contar 0 en silencio sería peor.
 - **Consecuencias:** el estado guarda `last_visible`; los tests cubren los cuatro casos (con datos, omitiendo ceros, visible antes, nunca visible).
 
+## Compartimento de las métricas
+
+- **Decisión:** `network.compartment_ocid` identifica el compartimento de la subred donde viven las VNIC y sus métricas. En la v1 todas las VNIC configuradas deben estar en ese mismo compartimento; si alguna está en otro, `check` la reporta como no visible.
+- **Motivo:** `SummarizeMetricsData` exige un compartimento y las métricas de una VNIC residen en el compartimento de su subred. Derivar el compartimento por VNIC requeriría permisos de red que no se conceden.
+- **Consecuencias:** se documenta la limitación; una versión futura puede aceptar un compartimento por VNIC o consultar el árbol con permisos de tenencia.
+
 ## Ventana de publicación provisional
 
 - **Decisión:** los buckets cuya hora termina dentro de las últimas `publication_latency_hours` (2 por defecto, configurable) se marcan `provisional`. Pasado ese margen, la reconsulta de 48 h los vuelve a evaluar y los sobrescribe.

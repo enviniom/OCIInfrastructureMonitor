@@ -1,6 +1,6 @@
 # Hito 1 — Investigación, configuración y cliente OCI
 
-- [ ] **Hito 1 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
+- [x] **Hito 1 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
 
 > **Archivo autocontenido.** Incluye el contexto general y las secciones 0, 1, 2, 3 y 7.1 del roadmap. No necesitas abrir `Roadmap.md` para ejecutar este hito.
 > **Depende de:** nada. **Habilita:** [Hito 2](hito-2-persistencia-acumulacion.md).
@@ -179,27 +179,27 @@ Validación estricta: campos desconocidos rechazados, rangos válidos, OCIDs con
 - [x] `docs/oci-permissions.md` con la política restrictiva propuesta (por compartimento o con condición sobre `oci_vcn`), su sintaxis verificada, cuándo conviene y la limitación de `check`: sin permisos de red no se distingue una VNIC inexistente de una sin actividad; la verificación de existencia real queda como opt-in futuro.
 - [x] Paquete `internal/config` con validación estricta y tests, incluida la ruta por defecto `/etc/oci-infrastructure-monitor/config.json` y el flag `--config`.
 - [x] `configs/config.example.json` con valores de ejemplo, sin secretos, que valide con el paquete `config`.
-- [ ] Interfaz del cliente de OCI Monitoring y cliente con Instance Principals, con mock para tests.
-- [ ] Consultas con troceo y paginación según los límites investigados.
-- [ ] Comando `check` que valida formato y visibilidad en métricas: OCID mal formado (sale `2`, configuración), VNIC visible en la retención o VNIC no visible (puede no existir, no tener métricas o no haber tenido tráfico; sale `0` con warning). Solo una consulta fallida sale `3`. Usa `ListMetrics` sin permisos nuevos; **no escribe configuración ni estado**.
-- [ ] Comando `version` con versión, arquitectura, SO y fecha de compilación inyectados con `-ldflags`.
+- [x] Interfaz del cliente de OCI Monitoring y cliente con Instance Principals, con mock para tests.
+- [x] Consultas con paginación (`ListMetrics`) y sin troceo en las ventanas previstas: 48 h y un mes a 1 h quedan muy por debajo de 100.000 datapoints.
+- [x] Comando `check` que valida formato y visibilidad en métricas: OCID mal formado (sale `2`, configuración), VNIC visible en la retención o VNIC no visible (puede no existir, no tener métricas o no haber tenido tráfico; sale `0` con warning). Solo una consulta fallida sale `3`. Usa `ListMetrics` sin permisos nuevos; **no escribe configuración ni estado**.
+- [x] Comando `version` con versión, arquitectura, SO y fecha de compilación inyectados con `-ldflags`.
 - [x] `docs/progress.md` actualizado con resultados reales y supuestos pendientes.
 
 ## 7. Criterio de cierre
 
-- [ ] Tests de configuración y del cliente (con mocks) en verde.
+- [x] Tests de configuración y del cliente (con mocks) en verde.
 - [x] El ejemplo de configuración valida sin errores y no contiene secretos.
 - [x] La validación rechaza `alert_percentages` con distinto de 4 valores, valores no crecientes, primero 0 o último distinto de 100.
 - [x] Límites, unidades, agregación y comportamiento de OCI con los ceros documentados con enlaces a la fuente oficial.
 - [x] Documentado si `ListMetrics` sobre `oci_vcn` está cubierto por `read metrics` y si `resourceId` identifica la VNIC.
 - [x] Documentada la ventana de actividad de `ListMetrics` (no hay una publicada; se documenta la limitación y el uso de `last_visible`).
-- [ ] `check` distingue OCID mal formado, VNIC visible en métricas y VNIC no visible, con el mensaje exacto de los tres casos.
-- [ ] Una VNIC no visible sale `0` con warning; un OCID mal formado sale `2`; solo una consulta fallida sale `3`.
-- [ ] El comando `check` no crea ni modifica archivos de estado ni de configuración (verificado por test o revisión explícita).
+- [x] `check` distingue OCID mal formado, VNIC visible en métricas y VNIC no visible, con el mensaje exacto de los tres casos.
+- [x] Una VNIC no visible sale `0` con warning; un OCID mal formado sale `2`; solo una consulta fallida sale `3`.
+- [x] El comando `check` no crea ni modifica archivos de estado ni de configuración (verificado por revisión: no importa persistencia).
 - [x] No se añadieron dependencias fuera del SDK oficial de OCI y la librería estándar sin justificación en `decisions.md`.
 - [x] `go build ./...`, `go vet ./...` y `go test ./...` ejecutados con resultado real reportado.
-- [x] `go test -race ./...` ejecutado (config, 2026-11-07).
-- [ ] La casilla superior de este hito marcada solo después de todo lo anterior.
+- [x] `go test -race ./...` ejecutado (config, app y cmd, 2026-11-07).
+- [x] La casilla superior de este hito marcada solo después de todo lo anterior.
 
 ## 8. Evidencia y traspaso
 
@@ -210,6 +210,7 @@ go version
 go build ./...
 go vet ./...
 go test ./...
+go test -race ./...
 ```
 
 Al cerrar, añade la entrada del Hito 1 en [`../progress.md`](../progress.md) con: qué se completó, qué quedó parcial, resultados de los comandos, decisiones nuevas, supuestos pendientes de validación real y qué debe hacer la siguiente sesión.

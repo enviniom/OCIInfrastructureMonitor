@@ -27,6 +27,7 @@ Allow dynamic-group 'Default'/'BackupInstances' to read metrics in compartment <
 ```
 
 - Si las VNIC están en varios compartimentos de subred, añade una sentencia por compartimento.
+- La v1 consulta un solo compartimento (`network.compartment_ocid`). Si las VNIC configuradas están en compartimentos distintos, la consulta no las verá; la política puede cubrir varios, pero la configuración actual no. Es una limitación documentada de la v1.
 - Si la subred está en el compartimento raíz, usa `in tenancy` con la misma condición de namespace.
 - `read metrics` incluye `inspect` en la jerarquía de verbos de OCI (`inspect` < `read` < `use` < `manage`), así que cubre tanto `SummarizeMetricsData` como `ListMetrics`. La documentación de Monitoring pide `inspect metrics` para listar definiciones y `read metrics` para consultar datos; `read` satisface ambos.
 - La condición `where target.metrics.namespace='oci_vcn'` es la sintaxis oficial que aparece en la documentación de VNIC Metrics.

@@ -126,6 +126,7 @@ Allow dynamic-group 'Default'/'BackupInstances' to read metrics in compartment <
 - No está documentado si los ceros se publican u omiten; la regla de rachas queda pendiente de evidencia.
 - La ventana de actividad de `ListMetrics` no está documentada; no se usa para afirmar existencia.
 - El tráfico registrado por VNIC no equivale al facturable; la aplicación lo advierte en README y alertas.
+- La v1 asume que todas las VNIC configuradas están en el mismo compartimento de subred (`network.compartment_ocid`). Si alguna está en otro compartimento, la consulta no la verá; una versión futura puede mapear compartimento por VNIC.
 
 ## Referencias
 
