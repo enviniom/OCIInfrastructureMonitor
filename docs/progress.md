@@ -6,11 +6,11 @@
 
 | Campo | Valor |
 |---|---|
-| Hito en curso | Hito 3 — no iniciado |
-| Último hito cerrado | Hito 2 — 2026-11-07 |
+| Hito en curso | Hito 4 — no iniciado |
+| Último hito cerrado | Hito 3 — 2026-11-07 |
 | Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test` y `go test -race` |
-| Resultado de la verificación | OK en `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/app` y `cmd/monitor`; `internal/oci` sin tests propios |
-| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram, timer systemd, `status` con estado real y publicación de ceros |
+| Resultado de la verificación | OK en `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/app`, `internal/alerts` y `cmd/monitor`; `internal/oci` sin tests propios |
+| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram, timer systemd, `status` con estado real, publicación de ceros y umbrales de alerta con tráfico real |
 
 ## Plantilla de cierre de hito
 
@@ -208,6 +208,66 @@ Todas en `docs/decisions.md`.
 - Leer `docs/hitos/hito-3-alertas.md`, `docs/architecture.md#persistencia-y-acumulación-hito-2` y `docs/decisions.md`.
 - Implementar el Hito 3 sobre `accumulate.Summary`, `state.alerts.monthly_alerts` y los buckets persistidos; el evaluador no consulta OCI.
 - No reabrir meses finalizados: las alertas del mes cerrado no se reevalúan.
+
+### 2026-11-07 — Hito 3 cerrado
+
+**Completado**
+
+- `internal/alerts`: evaluadores puros sobre los buckets persistidos. No hacen I/O, no envían y no escriben estado.
+  - `MonthlyThresholds`: cuatro niveles de `alert_percentages`, severidad por posición (informativa, advertencia, crítica, límite alcanzado), comparación con bytes exactos y porcentaje truncado a un decimal. Emite una sola alerta con el umbral máximo y la lista de umbrales nuevos cruzados; ignora meses finalizados y meses anteriores; advierte de acumulado incompleto o provisional.
+  - `Anomaly6H`: suma del saliente de las últimas 6 horas completas, umbral en GiB y enfriamiento configurable. La ventana es `[floor(now) − 6 h, floor(now))` y puede cruzar el cambio de mes. Advierte de buckets `incomplete`, `provisional` o ausentes y de una racha de `no_data` superior a `no_data_streak_hours` cuando `PublishZeros` sea true.
+  - `Evaluate` con interfaz `Evaluator` extensible; `MarkNotified` registra umbrales y arranca el enfriamiento solo después de un envío correcto; `Alert.Notification` produce la entrada de la cola del Hito 4.
+  - Deduplicación doble: umbrales ya notificados en `alerts.monthly_alerts` y alertas del mismo período/tipo que siguen pendientes en la cola.
+- `internal/config`: `high_traffic_cooldown_hours` (24 por defecto), validación de mínimo 1 y ejemplo actualizado.
+- `internal/persistence`: esquema `2` con `alerts.anomaly_6h`; migración en memoria de `state.json` e historiales v1, que se reescriben como v2 al guardar. Un historial v1 finalizado se lee como v2 y no se reabre. Una versión desconocida se sigue rechazando sin mover ni sobrescribir.
+- `accumulate.OptionsFromConfig`: una única traducción de configuración a opciones, compartida por `app`, `status` y `alerts`.
+- 154 tests: 36 de alertas, 29 de persistencia, 16 de configuración, 36 de acumulación, 26 de `app` y 11 de `cmd`.
+
+**Parcial o pendiente**
+
+- El cableado de `alerts.Evaluate` dentro de `run`, la cola de pendientes y el envío pertenecen al Hito 4. El run debe pasar los historiales del mes actual y del anterior para que la ventana de 6 h cruce bien el cambio de mes, y llamar a `MarkNotified` solo tras la respuesta correcta de Telegram.
+- `PublishZeros` sigue en `false`: la rama de racha larga de `no_data` está implementada y probada de forma unitaria, pero no se activa hasta confirmar empíricamente si OCI publica ceros.
+- `status` no muestra el detalle de alertas por umbral; no era un entregable del hito. Sí muestra el esquema migrado, las notificaciones pendientes y las correcciones.
+
+**Verificación ejecutada**
+
+| Comando | Resultado | Fecha |
+|---|---|---|
+| `go build ./...` | OK | 2026-11-07 |
+| `go vet ./...` | OK | 2026-11-07 |
+| `go test ./...` | OK (154 tests en `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/app`, `internal/alerts` y `cmd/monitor`) | 2026-11-07 |
+| `go test -race ./...` | OK | 2026-11-07 |
+
+**Decisiones nuevas**
+
+- Umbrales mensuales, severidad por posición y truncado del porcentaje.
+- Solo se evalúa el mes en curso; el mes en gracia actualiza el total pero no genera alertas nuevas.
+- Ventana de anomalía, enfriamiento de 24 h por defecto y advertencias de calidad de datos.
+- Registro de umbrales y enfriamiento solo tras un envío correcto; deduplicación también contra la cola pendiente.
+- Esquema v2 y migración desde v1.
+
+Todas en `docs/decisions.md`.
+
+**Supuestos pendientes de validar en producción**
+
+- El umbral de 6 h y el enfriamiento de 24 h son valores de partida; se ajustan con tráfico real.
+- Las horas recientes serán `provisional` durante `publication_latency_hours`; una alerta de anomalía puede dispararse con esa advertencia y el consumo real podría ser mayor.
+- Confirmar si OCI publica ceros: si lo hace, activar `PublishZeros` y revisar el efecto de las rachas de `no_data`.
+- Validar con Telegram real la deduplicación, el colapso de umbrales y el enfriamiento (Hito 4).
+
+**Para la siguiente sesión**
+
+- Leer `docs/hitos/hito-4-telegram-orquestacion.md`, `docs/architecture.md#alertas-hito-3` y `docs/decisions.md`.
+- Implementar `internal/telegram`, la cola de pendientes y el comando `run` de 13 pasos.
+- Al evaluar, pasar a `alerts.Evaluate` el estado ya vaciado de pendientes y los historiales del mes actual y anterior.
+- Llamar a `alerts.MarkNotified` solo después de un envío correcto.
+
+## Validaciones pendientes del Hito 3
+
+- [ ] Ajustar `high_traffic_6h_gib` y `high_traffic_cooldown_hours` con el tráfico real de la instancia.
+- [ ] Confirmar que la ventana de las últimas 6 horas completas refleja el consumo esperado cuando las dos últimas horas son `provisional`.
+- [ ] Validar con Telegram real que no se repite una alerta mensual y que el colapso registra todos los umbrales cruzados (Hito 4).
+- [ ] Confirmar el comportamiento de la racha de `no_data` cuando se sepa si OCI publica ceros.
 
 ## Validaciones pendientes del Hito 2
 

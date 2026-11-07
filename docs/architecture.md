@@ -110,7 +110,7 @@ No se factura por el uso de Telegram desde la aplicación; el coste relevante es
     └── 2026-12.json
 ```
 
-Todos los archivos llevan `"schema_version": 1`. Una versión desconocida se rechaza con código `4` sin mover ni sobrescribir el archivo. La lectura es estricta: cualquier campo nuevo exige subir la versión de esquema y migrar. Un archivo ilegible o que no valida sus invariantes se mueve a `<nombre>.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio. La excepción es `--dry-run`, que lee con `LoadOptions{Quarantine:false}` y no mueve nada.
+Todos los archivos llevan `"schema_version": 2` desde el Hito 3. La lectura acepta también `1`: un estado o historial v1 se migra en memoria y se reescribe como v2 en el siguiente guardado; un historial v1 finalizado se lee como v2 y no se reescribe. Una versión desconocida se rechaza con código `4` sin mover ni sobrescribir el archivo (`OldestSupportedSchemaVersion` marca el límite inferior). La lectura es estricta: cualquier campo nuevo exige subir la versión de esquema y migrar. Un archivo ilegible o que no valida sus invariantes se mueve a `<nombre>.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio. La excepción es `--dry-run`, que lee con `LoadOptions{Quarantine:false}` y no mueve nada.
 
 `state.json` contiene:
 
@@ -120,7 +120,8 @@ Todos los archivos llevan `"schema_version": 1`. Una versión desconocida se rec
 | `last_successful_query` | Última ejecución con al menos una consulta OCI exitosa. |
 | `consecutive_failures`, `last_failure` | Racha de ejecuciones con algún fallo de OCI. |
 | `finalized_months` | Espejo de los meses cerrados, para planificar sin abrir historiales antiguos. |
-| `alerts.monthly_alerts` | Umbrales ya notificados por período (lo usa el Hito 3). |
+| `alerts.monthly_alerts` | Umbrales ya notificados por período (los escribe `alerts.MarkNotified`). |
+| `alerts.anomaly_6h.last_notified_at` | Último envío correcto de la alerta de anomalía; arranca el enfriamiento. |
 | `pending_notifications` | Cola de Telegram con `kind`, `period`, `level`, `created_at`, `attempts` y `last_attempt` (la lógica de cola es del Hito 4). |
 | `vnics` | `first_visible`, `last_visible`, `last_data_at`, `visible` y `warning_since` por OCID de VNIC. |
 | `months` | `buckets_corrected`, `delta_bytes` y `updated_at` por mes, acumulados durante la gracia. |
@@ -129,7 +130,7 @@ Todos los archivos llevan `"schema_version": 1`. Una versión desconocida se rec
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "month": "2026-11",
   "finalized": false,
   "buckets": [
@@ -187,7 +188,35 @@ Todos los archivos llevan `"schema_version": 1`. Una versión desconocida se rec
 - avisos de VNIC que dejó de aparecer;
 - errores de persistencia, con código `4` si los hay.
 
-La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal cuando el Hito 3 lo muestre.
+La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal (lo hace el evaluador del Hito 3).
+
+## Alertas (Hito 3)
+
+`internal/alerts` evalúa los buckets persistidos y propone notificaciones. Los evaluadores son funciones puras sobre `Input{Now, Config, State, Histories}`: no consultan OCI, no envían por Telegram y no escriben estado. `Evaluate` recorre una lista de `Evaluator`; hoy son `MonthlyThresholds` y `Anomaly6H`, y un evaluador nuevo (por ejemplo, una línea base histórica) se añade sin tocar los existentes.
+
+### Umbrales mensuales
+
+- `alert_percentages` tiene exactamente cuatro valores crecientes, el último 100; la severidad se asigna por posición: informativa, advertencia, crítica y límite alcanzado.
+- `limitBytes = round(monthly_limit_gib × 2^30)`. Un umbral `p` se cruza cuando `usageBytes >= ceil(limitBytes × p / 100)`, con aritmética entera: la comparación usa bytes exactos.
+- El porcentaje mostrado es `floor(usageBytes × 1000 / limitBytes) / 10`, truncado y con coma decimal: un 89,96 % se muestra «89,9 %» y no dispara el 90 %.
+- Si se cruzan varios umbrales desde la última alerta notificada, se propone **una** alerta con el porcentaje máximo y la lista completa de umbrales nuevos cruzados.
+- Solo se evalúa el mes en curso. Un mes finalizado no se reevalúa; el mes anterior en gracia actualiza su total pero no genera alertas nuevas.
+- La deduplicación usa dos fuentes: `alerts.monthly_alerts` (umbrales ya enviados) y las notificaciones pendientes del mismo `(período, tipo)`. Si ya hay una pendiente igual o superior no se propone otra; un umbral superior sí se propone.
+- Si el acumulado es `incomplete` o `provisional`, la alerta incluye un aviso explícito y el texto lo dice.
+
+### Consumo anormal de 6 h
+
+- La ventana son las seis horas completas inmediatamente anteriores a `floor(now)`: `[floor(now) − 6 h, floor(now))`. Puede cruzar el cambio de mes, por lo que `Histories` debe incluir el mes actual y el anterior.
+- Solo se suman buckets `outbound`; el entrante nunca se añade.
+- Se dispara si `bytes >= high_traffic_6h_gib × 2^30`. El enfriamiento es `high_traffic_cooldown_hours` (24 por defecto) y se mide desde el último envío correcto.
+- Si la ventana contiene buckets `provisional`, `incomplete`, ausentes o —cuando `PublishZeros` sea true— una racha de `no_data` mayor que `no_data_streak_hours`, la alerta sigue pudiendo dispararse pero incluye `AVISO` y queda marcada como no fiable. Un `no_data` aislado cuenta 0 y no invalida la ventana.
+- La alerta de anomalía es independiente de la mensual y no se colapsa con ella.
+
+### Registro y entrega
+
+- `alerts.Alert` lleva el tipo, el período, el nivel (el porcentaje máximo en las mensuales), los bytes, el límite, el porcentaje truncado, la ventana y los avisos.
+- `Alert.Notification()` produce la entrada de la cola (`kind`, `period`, `level`, `created_at`) que persiste el Hito 4.
+- `alerts.MarkNotified(state, alert, at)` solo se llama tras una respuesta correcta de Telegram: fusiona los umbrales cruzados en `monthly_alerts` o fija `anomaly_6h.last_notified_at`. `MarkNotificationNotified` hace lo mismo para una entrada de la cola, que solo guarda el nivel máximo: al entregar el 90 % registra 50, 75 y 90. Los evaluadores nunca marcan nada.
 
 ## IAM y compartimentos
 

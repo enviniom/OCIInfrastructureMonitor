@@ -6,7 +6,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 
 ## Estado
 
-- **Implementación:** Hito 2 cerrado; `internal/config`, cliente OCI, `check`, `version`, persistencia, buckets horarios y `status` listos. Hito 3 no iniciado.
+- **Implementación:** Hito 3 cerrado; `internal/config`, cliente OCI, `check`, `version`, persistencia, buckets horarios, `status` y evaluadores de alertas listos. Hito 4 no iniciado.
 - **Repositorio:** `go.mod` (`go 1.27.3`), `Roadmap.md` y git inicializado; aún no hay `README.md`.
 - [x] Roadmap dividido en 5 hitos autocontenidos (2026-11-07).
 - [x] Índice de hitos con casillas de seguimiento.
@@ -16,6 +16,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 - [x] Hito 1B: configuración estricta, ejemplo y tests de `internal/config` (2026-11-07).
 - [x] Hito 1 cerrado: cliente OCI, `check`, `version`, tests con mocks y `go test -race` (2026-11-07).
 - [x] Hito 2 cerrado: `internal/persistence`, `internal/accumulate`, `app.Collect`, comando `status`, tests de duplicados, cambio de mes, finalización, correcciones, huecos, `no_data`, corrupción y concurrencia (2026-11-07).
+- [x] Hito 3 cerrado: `internal/alerts`, evaluadores de umbrales mensuales y de consumo anormal de 6 h, deduplicación, enfriamiento, avisos de datos incompletos/provisionales y esquema `state.json` v2 con migración desde v1 (2026-11-07).
 
 ## Cómo se usa este índice
 
@@ -38,7 +39,7 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 
 - [x] **[Hito 1 — Investigación, configuración y cliente OCI](hitos/hito-1-investigacion-configuracion-cliente-oci.md).** Documenta unidades, semántica, agregación y límites de OCI Monitoring; implementa `config`, el cliente de Monitoring con Instance Principals, `check` y `version`.
 - [x] **[Hito 2 — Persistencia y acumulación](hitos/hito-2-persistencia-acumulacion.md).** Implementa `state.json`, historial mensual, buckets horarios, escritura atómica, bloqueo, corrupción y el comando `status`.
-- [ ] **[Hito 3 — Alertas](hitos/hito-3-alertas.md).** Implementa umbrales mensuales y consumo anormal de 6 h, con deduplicación, enfriamiento y manejo de datos incompletos.
+- [x] **[Hito 3 — Alertas](hitos/hito-3-alertas.md).** Implementa umbrales mensuales y consumo anormal de 6 h, con deduplicación, enfriamiento y manejo de datos incompletos.
 - [ ] **[Hito 4 — Telegram y orquestación](hitos/hito-4-telegram-orquestacion.md).** Implementa el cliente de Telegram, la cola de pendientes, el ciclo completo de `run`, `--dry-run` y `test-telegram`.
 - [ ] **[Hito 5 — systemd, compilación y documentación](hitos/hito-5-systemd-compilacion-documentacion.md).** Cierra con service/timer, binarios, checksums, documentación de despliegue y entrega final.
 
@@ -104,6 +105,7 @@ Resumen de lo acordado con el autor del roadmap (detalle en [`decisions.md`](dec
 - **Cierre de mes:** cada ejecución consulta desde `min(ahora − requery_window, bucket más antiguo que necesite atención)`. Un mes se cierra en la primera consulta exitosa que cubra hasta el fin de mes y cumpla `ahora >= fin de mes + requery_window`; esa es la consulta de finalización. Después el archivo es inmutable. La gracia es `requery_window` (48 h por defecto), sin constante de 7 días.
 - **Estados de bucket:** `complete`, `provisional`, `no_data` e `incomplete`. Una VNIC nunca visible es `incomplete` y cuenta para el error persistente; solo “visible antes y ahora ausente” es `no_data` con warning y `last_visible` persistido.
 - **Umbrales:** cuatro niveles fijos (`alert_percentages`), severidad por posición, último valor 100. Comparación con bytes exactos y porcentaje mostrado truncado a un decimal.
+- **Alertas:** evaluadores puros sobre los buckets persistidos; solo se evalúa el mes en curso; se registran los umbrales nuevos al confirmar el envío; la anomalía de 6 h usa enfriamiento configurable y advierte de ventanas provisionales/incompletas.
 - **Unidad:** solo GiB (`monthly_limit_gib`, `high_traffic_6h_gib`).
 - **Errores:** 3 fallos consecutivos, enfriamiento 24 h, recuperación según la regla de colapso.
 - **Lock y cola:** `run` y `--dry-run` con `flock` exclusivo; `status` atómico sin lock; `check` sin lock. Cola máxima 50, caducidad 7 días, colapso por `(período, tipo)` al nivel más alto.
@@ -116,7 +118,7 @@ Resumen de lo acordado con el autor del roadmap (detalle en [`decisions.md`](dec
 
 ## Validación real pendiente
 
-Los hitos 1 y 2 cerraron con tests y mocks. Quedan para después del despliegue: `check` contra OCI real, pertenencia al Dynamic Group, política restrictiva, publicación de ceros, semántica delta/`sum()`, latencia real y el formato real de los timestamps agregados. La lista viva está en [`progress.md`](progress.md#validaciones-pendientes-del-hito-2).
+Los hitos 1, 2 y 3 cerraron con tests y mocks. Quedan para después del despliegue: `check` contra OCI real, pertenencia al Dynamic Group, política restrictiva, publicación de ceros, semántica delta/`sum()`, latencia real y el formato real de los timestamps agregados. La lista viva está en [`progress.md`](progress.md#validaciones-pendientes-del-hito-2).
 
 ## Detalles menores por decidir en implementación
 

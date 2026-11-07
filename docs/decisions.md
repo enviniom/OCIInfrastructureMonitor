@@ -32,6 +32,27 @@
 - **Motivo:** cuatro niveles fijos evitan una asignación de severidad ambigua; una sola unidad elimina casos límite y tests innecesarios; el truncado evita mensajes engañosos.
 - **Consecuencias:** hay que migrar el nombre del campo en configuración, ejemplo, validación y documentación; los tests cubren el truncado.
 
+## Evaluación de alertas y deduplicación (Hito 3, 2026-11-07)
+
+- **Decisión:** `internal/alerts` contiene evaluadores puros sobre los buckets y el estado persistidos: no hacen I/O, no envían y no escriben. Solo se evalúa el mes en curso; un mes finalizado no se reevalúa y el mes anterior en gracia actualiza su total pero no genera alertas nuevas. La deduplicación mensual se apoya en `alerts.monthly_alerts`, que solo se anota con `MarkNotified` tras un envío correcto, y en las notificaciones pendientes del mismo `(período, tipo)`; un umbral superior sí se propone. El nivel de la alerta y de la cola es el porcentaje de umbral más alto (por ejemplo `90`); la severidad es la posición en `alert_percentages`.
+- **Motivo:** separar evaluación de entrega permite probar la lógica sin Telegram y cumple «marcar como enviada solo tras una respuesta correcta». Filtrar pendientes evita encolar dos veces la misma alerta cuando un envío falla. Usar el porcentaje como nivel hace que el colapso por `(período, tipo)` conserve la magnitud que ve el operador y que ya guarda `monthly_alerts`.
+- **Alternativas descartadas:** evaluar el mes anterior en gracia (el Hito 2 decidió que las correcciones no reevalúan alertas); marcar los umbrales al proponer la alerta (un fallo de Telegram perdería la alerta); colapsar por la posición de severidad (menos informativa en la cola y en los mensajes).
+- **Consecuencias:** el Hito 4 debe llamar a `MarkNotified` después de cada envío correcto y persistir el estado; los evaluadores nunca marcan nada. Una notificación pendiente del mes anterior se sigue enviando por la cola, pero no se reevalúa el mes cerrado.
+
+## Consumo anormal de 6 h (Hito 3, 2026-11-07)
+
+- **Decisión:** la ventana son las seis horas completas inmediatamente anteriores a `floor(now)`, `[floor(now) − 6 h, floor(now))`, solo con buckets `outbound`. Puede cruzar el cambio de mes, así que el Hito 4 debe pasar los historiales del mes actual y del anterior. Se dispara con `bytes >= high_traffic_6h_gib × 2^30`. El enfriamiento es `high_traffic_cooldown_hours` (24 por defecto) y se mide desde el último envío correcto. Una ventana con buckets `provisional`, `incomplete`, ausentes o —si `PublishZeros`— una racha de `no_data` mayor que `no_data_streak_hours` puede disparar igualmente, pero la alerta incluye un aviso explícito y queda marcada como no fiable.
+- **Motivo:** una anomalía reciente no debe silenciarse por la latencia de publicación, pero tampoco debe presentarse como una conclusión firme si los datos no lo son. El enfriamiento de 24 h evita una alerta cada seis horas mientras el consumo alto persiste.
+- **Alternativas descartadas:** exigir seis buckets `complete` (retrasaría la alerta al menos `publication_latency_hours` y ocultaría la anomalía en curso); usar solo horas ya finalizadas (mismo problema); fijar un valor universal de consumo normal (no existe; la línea base histórica queda como otro evaluador futuro).
+- **Consecuencias:** el umbral y el enfriamiento son valores de partida que se ajustarán con tráfico real. La rama de racha larga de `no_data` solo se activa cuando `PublishZeros` sea true, y hoy está probada de forma unitaria pero inactiva.
+
+## Esquema v2 y migración (Hito 3, 2026-11-07)
+
+- **Decisión:** `schema_version` pasa a `2` porque `alerts` gana `anomaly_6h.last_notified_at`. La lectura acepta v1 y v2; un v1 se migra en memoria (los campos nuevos quedan vacíos) y se reescribe como v2 en el siguiente guardado. Un historial v1 finalizado se lee como v2 y no se reescribe, porque es inmutable. Una versión desconocida se rechaza sin mover ni sobrescribir el archivo. `OldestSupportedSchemaVersion` documenta el límite.
+- **Motivo:** el enfriamiento debe sobrevivir entre ejecuciones y el esquema estricto exige subir la versión por cada campo nuevo. La migración evita perder el estado de una instalación del Hito 2.
+- **Alternativas descartadas:** guardar el enfriamiento fuera de `state.json` (se perdería en cada ejecución); reutilizar `monthly_alerts` para la anomalía (mezcla períodos y tipos); aceptar campos nuevos sin subir la versión (rompe la lectura estricta y la detección de versiones futuras).
+- **Consecuencias:** `status` muestra el esquema en memoria (`2`) aunque el archivo siga en v1 hasta el siguiente `run`; el primer guardado lo migra. Un binario anterior que lea un v2 lo rechaza con código `4`, como corresponde.
+
 ## `check` sin permisos nuevos
 
 - **Decisión:** no se añaden permisos IAM. `check` usa `ListMetrics` sobre `oci_vcn`, que está cubierto por `read metrics` (verificación en [`progress.md`](progress.md#validaciones-pendientes-del-hito-1)), y reporta tres estados: (1) OCID mal formado, validado localmente; (2) VNIC visible en métricas durante la retención; (3) VNIC no visible, con el mensaje exacto de que puede no existir, no tener métricas o no haber tenido tráfico. El caso (3) sale `0` con un warning muy visible; un OCID mal formado sale `2`; solo una consulta fallida sale `3`. `check` no escribe configuración ni estado. Una verificación de existencia real queda como opt-in futuro, documentada en `oci-permissions.md`, nunca como comportamiento por defecto.
@@ -52,7 +73,7 @@
 
 ## Persistencia: archivos y esquema (Hito 2, 2026-11-07)
 
-- **Decisión:** `state.json` e `history/YYYY-MM.json` con `schema_version: 1`. El historial guarda `finalized`/`finalized_at` y es la fuente de verdad del cierre; `state.finalized_months` lo replica para planificar sin abrir historiales antiguos. Una versión desconocida se rechaza sin mover ni sobrescribir el archivo (código `4`). Un archivo corrupto se mueve a `*.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio.
+- **Decisión:** `state.json` e `history/YYYY-MM.json` con `schema_version: 1` en el Hito 2 y `2` desde el Hito 3 (migración en la sección «Esquema v2 y migración»). El historial guarda `finalized`/`finalized_at` y es la fuente de verdad del cierre; `state.finalized_months` lo replica para planificar sin abrir historiales antiguos. Una versión desconocida se rechaza sin mover ni sobrescribir el archivo (código `4`). Un archivo corrupto se mueve a `*.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio.
 - **Motivo:** el cierre debe sobrevivir a un corte entre la escritura del historial (inmutable) y la del estado; si el historial manda, el estado se reconcilia solo en la siguiente ejecución.
 - **Alternativas descartadas:** guardar el cierre solo en `state.json` (un estado perdido reabriría un mes inmutable); usar SQLite u otro motor (fuera de alcance); reescribir el archivo corrupto (pierde evidencia y puede perder datos).
 - **Consecuencias:** dos escrituras atómicas en el cierre; `status` sigue mostrando el resto si un historial está corrupto y sale `4`. La lectura es estricta (`DisallowUnknownFields`): cualquier campo nuevo exige subir `schema_version` y migrar el estado; así una versión más nueva se rechaza sin cuarentena y una más vieja no pierde campos al reescribir.
