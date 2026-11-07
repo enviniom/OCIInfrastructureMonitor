@@ -346,3 +346,40 @@ func TestTestTelegramCommandSendFailureExits5(t *testing.T) {
 		t.Fatalf("exit = %d, want 5; stderr = %s", code, errOut)
 	}
 }
+
+func TestTestTelegramCommandDoesNotQuarantineCorruptState(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	configPath := writeRunConfig(t, stateDir, false, false)
+	envPath := writeTelegramEnv(t)
+	sender := &stubSender{}
+	stubFactories(t, nil, sender)
+
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(stateDir, "state.json")
+	if err := os.WriteFile(statePath, []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var code int
+	_, errOut := captureOutput(t, func() {
+		code = execute([]string{"test-telegram", "--config", configPath, "--telegram-env", envPath})
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr = %s", code, errOut)
+	}
+	if sender.count() != 1 {
+		t.Fatalf("sent = %d, want 1", sender.count())
+	}
+	if _, err := os.Stat(statePath); err != nil {
+		t.Errorf("state.json was moved: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(stateDir, "state.json.corrupt-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("quarantine files = %v, want none", matches)
+	}
+}

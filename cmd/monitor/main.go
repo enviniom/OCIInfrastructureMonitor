@@ -149,7 +149,9 @@ func executeTestTelegram(args []string) int {
 
 	now := time.Now().UTC()
 	store := persistence.New(cfg.Storage.StateDir)
-	summary := app.BuildStatus(store, cfg, now).Months[0].Summary
+	// A diagnostic must not move a corrupt state file aside: read without
+	// quarantine. "status" keeps the documented quarantine behavior.
+	summary := app.BuildStatusWithOptions(store, cfg, now, persistence.LoadOptions{Quarantine: false}).Months[0].Summary
 	text := app.RenderTestMessage(cfg, summary, now)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

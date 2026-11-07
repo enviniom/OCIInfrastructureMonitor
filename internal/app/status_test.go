@@ -3,6 +3,7 @@ package app
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -191,6 +192,35 @@ func TestBuildStatusCorruptStateStillShowsHistory(t *testing.T) {
 	}
 	if !report.Months[0].HasHistory {
 		t.Error("current history was not read")
+	}
+	if store.HasState() {
+		t.Error("state.json still exists; BuildStatus should quarantine by default")
+	}
+}
+
+func TestBuildStatusWithOptionsDoesNotQuarantine(t *testing.T) {
+	cfg := statusConfig(t)
+	store := persistence.New(cfg.Storage.StateDir)
+	if err := store.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.StatePath(), []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	report := BuildStatusWithOptions(store, cfg, utcHour(2026, 11, 7, 13), persistence.LoadOptions{Quarantine: false})
+	if report.StateErr == nil {
+		t.Fatal("StateErr = nil, want a corruption error")
+	}
+	if !store.HasState() {
+		t.Error("state.json was moved despite Quarantine:false")
+	}
+	matches, err := filepath.Glob(filepath.Join(cfg.Storage.StateDir, "state.json.corrupt-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("quarantine files = %v, want none", matches)
 	}
 }
 

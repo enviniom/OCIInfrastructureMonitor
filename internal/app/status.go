@@ -48,8 +48,17 @@ type StatusReport struct {
 
 // BuildStatus reads state.json and the history of the current and previous
 // months without taking the lock and without querying OCI. A corrupt file only
-// affects its own file: the rest of the status is still reported.
+// affects its own file: the rest of the status is still reported. Corrupt files
+// are quarantined by default; use BuildStatusWithOptions to read without moving
+// them.
 func BuildStatus(store *persistence.Store, cfg config.Config, now time.Time) StatusReport {
+	return BuildStatusWithOptions(store, cfg, now, persistence.LoadOptions{Quarantine: true})
+}
+
+// BuildStatusWithOptions is BuildStatus with explicit load options. The
+// test-telegram diagnostic uses Quarantine:false so a corrupt file is reported
+// but never moved.
+func BuildStatusWithOptions(store *persistence.Store, cfg config.Config, now time.Time, options persistence.LoadOptions) StatusReport {
 	now = now.UTC()
 	report := StatusReport{
 		StateDir:    store.Dir(),
@@ -57,7 +66,7 @@ func BuildStatus(store *persistence.Store, cfg config.Config, now time.Time) Sta
 		StateExists: store.HasState(),
 	}
 
-	state, err := store.LoadState()
+	state, err := store.LoadStateWith(options)
 	if err != nil {
 		report.StateErr = err
 		report.Errors = append(report.Errors, err)
@@ -92,7 +101,7 @@ func BuildStatus(store *persistence.Store, cfg config.Config, now time.Time) Sta
 			Label:   entry.label,
 			Summary: accumulate.Summary{Month: entry.month},
 		}
-		history, exists, err := store.LoadHistory(entry.month)
+		history, exists, err := store.LoadHistoryWith(entry.month, options)
 		if err != nil {
 			status.Err = err
 			report.Errors = append(report.Errors, err)
