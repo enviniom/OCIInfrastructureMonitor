@@ -6,11 +6,11 @@
 
 | Campo | Valor |
 |---|---|
-| Hito en curso | Hito 2 — no iniciado |
-| Último hito cerrado | Hito 1 — 2026-11-07 |
+| Hito en curso | Hito 3 — no iniciado |
+| Último hito cerrado | Hito 2 — 2026-11-07 |
 | Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test` y `go test -race` |
-| Resultado de la verificación | OK en `internal/config`, `internal/app`, `internal/oci` (sin tests propios) y `cmd/monitor` |
-| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram, timer systemd |
+| Resultado de la verificación | OK en `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/app` y `cmd/monitor`; `internal/oci` sin tests propios |
+| Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram, timer systemd, `status` con estado real y publicación de ceros |
 
 ## Plantilla de cierre de hito
 
@@ -158,9 +158,70 @@ Copiar este bloque al cerrar cada hito y rellenarlo con datos reales:
 
 - Hito 2: persistencia, buckets horarios, cierre de mes, `status` y recuperación.
 
+### 2026-11-07 — Hito 2 cerrado
+
+**Completado**
+
+- `internal/persistence`: `state.json`, historial mensual, escritura atómica (temporal + `fsync` + `rename`), permisos `0600`/`0700`, `flock` exclusivo con `syscall.Flock`, cuarentena `*.corrupt-<timestamp>`, validación estricta de esquema e invariantes, rechazo de escritura sobre un historial finalizado y carga de solo lectura para `--dry-run`.
+- `internal/accumulate`: normalización de datapoints a buckets horarios UTC (timestamp de fin de ventana), planificación de la ventana de reconsulta y de la finalización, sobrescritura por clave, clasificación `complete`/`provisional`/`no_data`/`incomplete`, `UpdateVNIC` con `first_visible`/`last_visible`/warning, acumulado mensual por suma de buckets, rachas de `no_data`, huecos irrecuperables y correcciones.
+- `internal/app`: `Collect` (pasos 5–8 del ciclo: planificar, consultar, persistir historial y acumular, cerrar mes) y `BuildStatus` (solo lectura, sin OCI).
+- `cmd/monitor`: comando `status` en español, sin lock y sin escribir estado ni historial; la única escritura posible es mover un archivo corrupto a `*.corrupt-*`. Códigos `0`, `2` y `4`.
+- 114 tests: 26 de persistencia, 36 de acumulación, 26 de app, 11 de `cmd` y 15 de configuración del Hito 1.
+
+**Parcial o pendiente**
+
+- El comando `run`, el lock tomado por el proceso, el logger real y el envío de notificaciones son del Hito 4. `Collect` deja el reporte y el hook `Logf` para que `run` registre los fallos y las correcciones tardías.
+- La política `PublishZeros` queda en `false` hasta confirmar si OCI publica ceros; la lógica de racha ya está implementada y probada. Si la validación confirma que OCI publica ceros, al activar la política hay que implementar además la exigencia de datos antes y después de la hora ausente que describe `decisions.md`; hoy no se aplica porque se asume que OCI omite los ceros.
+- El registro en log de una corrección tardía es defensa en profundidad: la ruta normal no reconsulta meses cerrados. El descarte se prueba en `accumulate.Reconcile`.
+
+**Verificación ejecutada**
+
+| Comando | Resultado | Fecha |
+|---|---|---|
+| `go build ./...` | OK | 2026-11-07 |
+| `go vet ./...` | OK | 2026-11-07 |
+| `go test ./...` | OK (114 tests en `internal/config`, `internal/persistence`, `internal/accumulate`, `internal/app` y `cmd/monitor`) | 2026-11-07 |
+| `go test -race ./...` | OK | 2026-11-07 |
+
+**Decisiones nuevas**
+
+- Persistencia, esquema y fuente de verdad del cierre.
+- Hora del bucket y ventana de consulta.
+- Clasificación de horas sin datapoint y protección de los datos confirmados.
+- Visibilidad de VNIC inferida de datapoints y warning de desaparición.
+- Correcciones y cierre de mes.
+- Meses que se examinan y huecos irrecuperables.
+- Lock con la biblioteca estándar y contrato de `status`.
+
+Todas en `docs/decisions.md`.
+
+**Supuestos pendientes de validar en producción**
+
+- Formato real de los timestamps de `SummarizeMetricsData` (fin de ventana) y que `sum()` por hora sea correcto.
+- Publicación de ceros: si OCI publica ceros, cambiar `PublishZeros` para que una racha larga invalide el acumulado.
+- Latencia real de publicación, para ajustar `publication_latency_hours`.
+- Permisos reales de `/var/lib/oci-infrastructure-monitor` con el usuario del servicio y SELinux.
+- Comportamiento de `status` con un estado generado por ejecuciones reales.
+
+**Para la siguiente sesión**
+
+- Leer `docs/hitos/hito-3-alertas.md`, `docs/architecture.md#persistencia-y-acumulación-hito-2` y `docs/decisions.md`.
+- Implementar el Hito 3 sobre `accumulate.Summary`, `state.alerts.monthly_alerts` y los buckets persistidos; el evaluador no consulta OCI.
+- No reabrir meses finalizados: las alertas del mes cerrado no se reevalúan.
+
+## Validaciones pendientes del Hito 2
+
+- [ ] `status` contra un directorio de estado generado por ejecuciones reales.
+- [ ] Confirmar con una consulta real que el timestamp agregado corresponde al fin de la ventana y que `sum()` por hora suma los 60 puntos.
+- [ ] Confirmar si OCI publica ceros u omite datapoints inactivos; ajustar `PublishZeros` si publica ceros.
+- [ ] Medir la latencia real de publicación y ajustar `publication_latency_hours`.
+- [ ] Verificar los permisos `0600`/`0700` y el `flock` con el usuario del servicio y SELinux.
+- [ ] Verificar que un historial finalizado no se reescribe tras el despliegue.
+
 ## Validaciones pendientes del Hito 1
 
-- [ ] ¿OCI publica puntos con valor 0 o los omite? (no hay declaración oficial; falta prueba empírica)- [x] ¿`ListMetrics` sobre `oci_vcn` está cubierto por `read metrics`? Sí: `read` incluye `inspect`, que es el mínimo para listar definiciones.
+- [ ] ¿OCI publica puntos con valor 0 o los omite? (no hay declaración oficial; falta prueba empírica)
+- [x] ¿`ListMetrics` sobre `oci_vcn` está cubierto por `read metrics`? Sí: `read` incluye `inspect`, que es el mínimo para listar definiciones.
 - [x] ¿La dimensión `resourceId` identifica la VNIC en este namespace? Sí, según VNIC Metrics.
 - [x] ¿Qué ventana de actividad usa `ListMetrics`? No hay una publicada; se documenta la limitación y se usa `last_visible`, sin inferir existencia.
 - [x] Retención, resolución mínima, latencia, agregación y límites documentados. Retención 90 días; 1m/5m/1h/1d con máximos 7/30/90/90 días; 100.000 datapoints; 10 TPS; latencia no publicada (2 h provisional); agregación `sum()` pendiente de confirmación empírica.

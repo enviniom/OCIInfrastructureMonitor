@@ -29,7 +29,7 @@ Garantías del ciclo:
 12. Actualizar la última ejecución, la última consulta exitosa, los contadores de fallos y el estado de alertas.
 13. Registrar el resumen, liberar el `flock` y salir con el código correspondiente.
 
-Con `--dry-run`: se ejecutan los pasos de lectura y cálculo, pero no se escribe estado, no se encola ni se envía nada, y no se marca ninguna alerta como enviada.
+Con `--dry-run`: se ejecutan los pasos de lectura y cálculo, pero no se escribe estado, no se encola ni se envía nada, y no se marca ninguna alerta como enviada. La lectura tampoco mueve un archivo corrupto: se informa y se sale sin tocarlo.
 
 ## Métricas de red (Hito 1)
 
@@ -96,6 +96,98 @@ La lista de precios de Monitoring incluye **500 millones de datapoints de ingest
 - Incluso consultando 1 minuto para 48 h, el volumen mensual queda muy por debajo del billón de retrieval gratuito.
 
 No se factura por el uso de Telegram desde la aplicación; el coste relevante es el tráfico de red de OCI, que es independiente de Monitoring.
+
+## Persistencia y acumulación (Hito 2)
+
+### Archivos y esquema
+
+```text
+/var/lib/oci-infrastructure-monitor/     # 0700
+├── state.json                           # 0600
+├── lock                                 # 0600
+└── history/                             # 0700
+    ├── 2026-11.json                     # 0600
+    └── 2026-12.json
+```
+
+Todos los archivos llevan `"schema_version": 1`. Una versión desconocida se rechaza con código `4` sin mover ni sobrescribir el archivo. La lectura es estricta: cualquier campo nuevo exige subir la versión de esquema y migrar. Un archivo ilegible o que no valida sus invariantes se mueve a `<nombre>.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio. La excepción es `--dry-run`, que lee con `LoadOptions{Quarantine:false}` y no mueve nada.
+
+`state.json` contiene:
+
+| Campo | Contenido |
+|---|---|
+| `last_run` | Última ejecución, haya ido bien o mal. |
+| `last_successful_query` | Última ejecución con al menos una consulta OCI exitosa. |
+| `consecutive_failures`, `last_failure` | Racha de ejecuciones con algún fallo de OCI. |
+| `finalized_months` | Espejo de los meses cerrados, para planificar sin abrir historiales antiguos. |
+| `alerts.monthly_alerts` | Umbrales ya notificados por período (lo usa el Hito 3). |
+| `pending_notifications` | Cola de Telegram con `kind`, `period`, `level`, `created_at`, `attempts` y `last_attempt` (la lógica de cola es del Hito 4). |
+| `vnics` | `first_visible`, `last_visible`, `last_data_at`, `visible` y `warning_since` por OCID de VNIC. |
+| `months` | `buckets_corrected`, `delta_bytes` y `updated_at` por mes, acumulados durante la gracia. |
+
+`history/YYYY-MM.json`:
+
+```json
+{
+  "schema_version": 1,
+  "month": "2026-11",
+  "finalized": false,
+  "buckets": [
+    {
+      "resource_id": "ocid1.vnic...",
+      "direction": "outbound",
+      "hour": "2026-11-07T12:00:00Z",
+      "bytes": 1234567,
+      "status": "complete",
+      "captured_at": "2026-11-07T13:30:00Z"
+    }
+  ]
+}
+```
+
+- La clave de deduplicación es `(resource_id, direction, hour)`. `hour` es el inicio de la hora UTC.
+- `finalized` y `finalized_at` viven en el historial, que es la fuente de verdad; `state.finalized_months` es un espejo. Si el proceso cae entre las dos escrituras, la ejecución siguiente adopta el cierre desde el historial.
+- Un mes finalizado no se modifica ni se borra. `SaveHistory` rechaza sobrescribirlo con `ErrFinalizedHistory`.
+
+### Modelo de buckets
+
+| Estado | Cuándo se asigna | Bytes |
+|---|---|---|
+| `provisional` | La hora termina dentro de `publication_latency_hours`, con o sin datapoint. Se reconsulta. | El punto si existe; 0 si no. |
+| `complete` | Pasada la latencia, con datapoint, o con un punto ya observado antes. | El último punto observado. |
+| `no_data` | Pasada la latencia, sin datapoint, y la VNIC ya fue visible. Cuenta 0. | 0 |
+| `incomplete` | Consulta fallida, hora anterior a la primera visibilidad de la VNIC u hora fuera de retención. | 0 |
+
+- La hora del bucket se calcula a partir del timestamp agregado: OCI lo marca al final de la ventana, así que un punto alineado a las 12:00 pertenece al bucket de las 11:00 (`BucketHour`). Un timestamp no alineado cae en la hora que lo contiene.
+- Una consulta con éxito que omite un punto ya confirmado no borra el dato: solo se reescriben las horas con punto recibido y las que son `provisional`, `incomplete` o faltan. Así una respuesta parcial o vacía no destruye el mes.
+- `no_data` no invalida el acumulado por sí solo. Una racha mayor que `no_data_streak_hours` solo lo invalida si OCI publica ceros explícitos; la política vive en `accumulate.Options.PublishZeros` y hoy vale `false` a la espera de la validación empírica.
+- La visibilidad se infiere de los datapoints, no de `ListMetrics`: una VNIC con datos previos que no devuelve ninguno en una ejecución con consultas exitosas pasa a `visible=false` con `warning_since`; una VNIC que nunca apareció deja sus horas `incomplete` y no genera warning.
+
+### Ventana, correcciones y cierre
+
+1. **Meses a examinar:** desde la última traza (`last_run` o `last_successful_query`) o el horizonte de 90 días, lo que sea posterior, más todo mes con historial dentro de la retención. Una instalación nueva examina solo el mes en curso.
+2. **Ventana:** cada ejecución consulta desde `min(ahora − requery_window, bucket más antiguo que necesite atención)` hasta la hora completa actual (o hasta el fin de mes en la finalización), acotada por el inicio del mes y por la retención. Un bucket necesita atención si es `provisional`, `incomplete` o falta.
+3. **Fin de mes:** pasado `ahora >= fin de mes + requery_window`, la consulta de finalización va desde el bucket más antiguo que necesite atención hasta el fin de mes. Si no queda nada que recuperar, el mes se cierra sin consulta. Si la consulta falla, el mes no se cierra y se reintenta.
+4. **Gracia:** mientras `ahora < fin de mes + requery_window`, el mes anterior se sigue reconsultando con la ventana de 48 h y sus correcciones actualizan el total.
+5. **Huecos irrecuperables:** las horas anteriores al horizonte de retención se rellenan como `incomplete` y el mes se puede cerrar con el acumulado marcado incompleto. El resto del mes se consulta si los datos siguen en retención.
+6. **Corrección:** un bucket existente cuyos bytes cambian. Se cuenta en `state.months` con su delta. Tras el cierre se descarta y se cuenta en `CollectReport.LateCorrections`, que `Collect` registra por `CollectOptions.Logf`.
+
+### Escritura, bloqueo y corrupción
+
+- Archivo temporal en el mismo directorio, `fsync`, `rename` atómico y `fsync` del directorio; `0600` para archivos y `0700` para directorios.
+- `flock` exclusivo y no bloqueante (`LOCK_EX|LOCK_NB`) sobre `<state_dir>/lock`, con la biblioteca estándar (`syscall.Flock`). `Collect` exige el lock tomado; lo toma el comando `run` del Hito 4. `status` lee sin lock. Si dos ejecuciones coinciden, la segunda no obtiene el lock (`ErrLocked`, código `6` en `run`).
+- Esquema desconocido: error sin escritura. Corrupción: cuarentena y error (salvo en `--dry-run`, que informa sin mover). Un historial corrupto solo afecta a ese mes: `status` sigue mostrando el resto y sale `4`; `Collect` aborta para no construir sobre datos ilegibles.
+
+### `status`
+
+`status` no consulta OCI y no escribe estado ni historial; si encuentra un archivo corrupto lo mueve a `*.corrupt-*` y sale `4`. Muestra, en español y en texto:
+
+- directorio, esquema, última ejecución, última consulta exitosa, fallos consecutivos y notificaciones pendientes;
+- mes actual y mes anterior: abierto, finalizado, en gracia o pendiente de finalización; GiB y bytes del saliente; acumulado `completo`, `provisional`, `incompleto` o `sin datos`; conteo de `complete`/`provisional`/`no_data`/`incomplete`; entrante aparte si existe; correcciones acumuladas y su delta en bytes;
+- avisos de VNIC que dejó de aparecer;
+- errores de persistencia, con código `4` si los hay.
+
+La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal cuando el Hito 3 lo muestre.
 
 ## IAM y compartimentos
 

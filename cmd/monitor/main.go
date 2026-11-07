@@ -12,6 +12,7 @@ import (
 	"github.com/enviniom/OCIInfrastructureMonitor/internal/app"
 	"github.com/enviniom/OCIInfrastructureMonitor/internal/config"
 	"github.com/enviniom/OCIInfrastructureMonitor/internal/oci"
+	"github.com/enviniom/OCIInfrastructureMonitor/internal/persistence"
 )
 
 var (
@@ -33,6 +34,8 @@ func execute(args []string) int {
 	switch args[0] {
 	case "check":
 		return executeCheck(args[1:])
+	case "status":
+		return executeStatus(args[1:])
 	case "version":
 		printVersion()
 		return 0
@@ -44,6 +47,31 @@ func execute(args []string) int {
 		usage(os.Stderr)
 		return 2
 	}
+}
+
+func executeStatus(args []string) int {
+	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", config.DefaultPath, "ruta del archivo de configuración")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
+		return 2
+	}
+
+	store := persistence.New(cfg.Storage.StateDir)
+	report := app.BuildStatus(store, cfg, time.Now())
+	writeStatus(os.Stdout, report)
+
+	if len(report.Errors) > 0 {
+		fmt.Fprintln(os.Stderr, "status: error de persistencia; revisa los archivos indicados")
+		return 4
+	}
+	return 0
 }
 
 func executeCheck(args []string) int {
@@ -114,13 +142,16 @@ func printVersion() {
 	fmt.Printf("os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 }
 
-func usage(w *os.File) {
+func usage(w io.Writer) {
 	fmt.Fprintf(w, `Uso:
   oci-infrastructure-monitor check [--config PATH]
+  oci-infrastructure-monitor status [--config PATH]
   oci-infrastructure-monitor version
   oci-infrastructure-monitor --help
 
 check: valida configuración, autenticación y visibilidad de las VNIC en OCI Monitoring.
        No modifica estado ni configuración.
+status: muestra el estado persistido sin consultar OCI ni escribir estado ni historial.
+        Si encuentra un archivo corrupto lo mueve a *.corrupt-* y sale 4.
 `)
 }

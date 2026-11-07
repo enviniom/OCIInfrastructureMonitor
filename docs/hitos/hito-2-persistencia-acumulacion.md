@@ -1,6 +1,6 @@
 # Hito 2 — Persistencia y acumulación
 
-- [ ] **Hito 2 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
+- [x] **Hito 2 completado** — marcar solo cuando todos los entregables y criterios de cierre estén verificados.
 
 > **Archivo autocontenido.** Incluye el contexto general y las secciones 0, 3.2 y 4 del roadmap. No necesitas abrir `Roadmap.md` para ejecutar este hito.
 > **Depende de:** [Hito 1](hito-1-investigacion-configuracion-cliente-oci.md). **Habilita:** [Hito 3](hito-3-alertas.md).
@@ -95,29 +95,29 @@ Archivo temporal en el mismo directorio, `fsync`, renombrado atómico, permisos 
 
 ## 4. Entregables
 
-- [ ] Paquete `internal/persistence` con `state.json`, historial mensual, escritura atómica, bloqueo exclusivo y detección de corrupción.
-- [ ] Lógica de buckets: sobrescritura por clave, ventana de reconsulta, recuperación tras apagado, estados `complete`/`provisional`/`no_data`/`incomplete`, cálculo del acumulado mensual, cambio de mes y finalización por `requery_window`.
-- [ ] Comando `status`, que muestra el estado persistido sin consultar OCI, indica si el acumulado es incompleto y muestra el conteo de `no_data`, el estado abierto/finalizado del mes actual y del anterior cerrado o en gracia, los buckets corregidos, la diferencia en bytes y el warning de VNIC que dejó de ser visible.
-- [ ] Tests de duplicados, cambio de mes, finalización, mes sin ejecuciones, correcciones durante la gracia, recuperación, huecos irrecuperables, `no_data`, rachas largas, VNIC nunca visible, VNIC visible que deja de aparecer, corrupción de archivos y concurrencia.
-- [ ] Validación de la versión de esquema: una versión desconocida falla con código `4` y no sobrescribe el archivo.
-- [ ] `go test -race ./...` ejecutado (o su limitación documentada).
-- [ ] `docs/progress.md` actualizado con resultados reales.
+- [x] Paquete `internal/persistence` con `state.json`, historial mensual, escritura atómica, bloqueo exclusivo y detección de corrupción.
+- [x] Lógica de buckets: sobrescritura por clave, ventana de reconsulta, recuperación tras apagado, estados `complete`/`provisional`/`no_data`/`incomplete`, cálculo del acumulado mensual, cambio de mes y finalización por `requery_window`.
+- [x] Comando `status`, que muestra el estado persistido sin consultar OCI, indica si el acumulado es incompleto y muestra el conteo de `no_data`, el estado abierto/finalizado del mes actual y del anterior cerrado o en gracia, los buckets corregidos, la diferencia en bytes y el warning de VNIC que dejó de ser visible.
+- [x] Tests de duplicados, cambio de mes, finalización, mes sin ejecuciones, correcciones durante la gracia, recuperación, huecos irrecuperables, `no_data`, rachas largas, VNIC nunca visible, VNIC visible que deja de aparecer, corrupción de archivos y concurrencia.
+- [x] Validación de la versión de esquema: una versión desconocida falla con código `4` y no sobrescribe el archivo.
+- [x] `go test -race ./...` ejecutado (o su limitación documentada).
+- [x] `docs/progress.md` actualizado con resultados reales.
 
 ## 5. Criterio de cierre
 
-- [ ] Tests de duplicados, cambio de mes, finalización, mes sin ejecuciones, correcciones durante la gracia, recuperación, huecos irrecuperables, `no_data`, rachas largas, corrupción y concurrencia en verde.
-- [ ] La sobrescritura por clave no duplica bytes al reconsultar la misma ventana.
-- [ ] Un mes se finaliza en la primera consulta exitosa que cumple `ahora >= fin de mes + requery_window` y cubre hasta el fin de mes; después, una corrección tardía se descarta y se registra en log.
-- [ ] Un mes sin ejecuciones durante la gracia se recupera con la finalización si los datos están en retención; solo lo irrecuperable queda `incomplete`.
-- [ ] Las correcciones durante la gracia actualizan el total y `status` (buckets corregidos y diferencia en bytes), sin reevaluar alertas.
-- [ ] Un `no_data` aislado cuenta 0 sin marcar el acumulado como incompleto; una racha superior a `no_data_streak_hours` solo lo marca si OCI publica ceros explícitos.
-- [ ] Una VNIC nunca visible queda `incomplete` y cuenta para el error persistente; una VNIC visible que deja de aparecer genera `no_data` con warning y `last_visible` persistido.
-- [ ] Un hueco irrecuperable se marca `incomplete` y el acumulado se presenta como incompleto.
-- [ ] Un archivo corrupto se mueve a `*.corrupt-<timestamp>` y el proceso falla con un código distinto; no se sobrescribe en silencio.
-- [ ] Una versión de esquema desconocida falla con código `4` sin sobrescribir el archivo.
-- [ ] Dos ejecuciones simultáneas no corrompen el estado (bloqueo verificado).
-- [ ] `go build ./...`, `go vet ./...` y `go test ./...` ejecutados con resultado real reportado.
-- [ ] La casilla superior de este hito marcada solo después de todo lo anterior.
+- [x] Tests de duplicados, cambio de mes, finalización, mes sin ejecuciones, correcciones durante la gracia, recuperación, huecos irrecuperables, `no_data`, rachas largas, corrupción y concurrencia en verde.
+- [x] La sobrescritura por clave no duplica bytes al reconsultar la misma ventana.
+- [x] Un mes se finaliza en la primera consulta exitosa que cumple `ahora >= fin de mes + requery_window` y cubre hasta el fin de mes; después, una corrección tardía se descarta y se registra en log.
+- [x] Un mes sin ejecuciones durante la gracia se recupera con la finalización si los datos están en retención; solo lo irrecuperable queda `incomplete`.
+- [x] Las correcciones durante la gracia actualizan el total y `status` (buckets corregidos y diferencia en bytes), sin reevaluar alertas.
+- [x] Un `no_data` aislado cuenta 0 sin marcar el acumulado como incompleto; una racha superior a `no_data_streak_hours` solo lo marca si OCI publica ceros explícitos.
+- [x] Una VNIC nunca visible queda `incomplete` y cuenta para el error persistente; una VNIC visible que deja de aparecer genera `no_data` con warning y `last_visible` persistido.
+- [x] Un hueco irrecuperable se marca `incomplete` y el acumulado se presenta como incompleto.
+- [x] Un archivo corrupto se mueve a `*.corrupt-<timestamp>` y el proceso falla con un código distinto; no se sobrescribe en silencio.
+- [x] Una versión de esquema desconocida falla con código `4` sin sobrescribir el archivo.
+- [x] Dos ejecuciones simultáneas no corrompen el estado (bloqueo verificado).
+- [x] `go build ./...`, `go vet ./...` y `go test ./...` ejecutados con resultado real reportado.
+- [x] La casilla superior de este hito marcada solo después de todo lo anterior.
 
 ## 6. Evidencia y traspaso
 

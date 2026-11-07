@@ -50,6 +50,55 @@
 - **Motivo:** evitar ráfagas, recuperaciones sin contexto y alertas de error que no se pueden entregar por el mismo canal caído.
 - **Consecuencias:** la cola guarda tipo, período y rango de la falla; hay que probar el reemplazo de error + recuperación por un solo mensaje.
 
+## Persistencia: archivos y esquema (Hito 2, 2026-11-07)
+
+- **Decisión:** `state.json` e `history/YYYY-MM.json` con `schema_version: 1`. El historial guarda `finalized`/`finalized_at` y es la fuente de verdad del cierre; `state.finalized_months` lo replica para planificar sin abrir historiales antiguos. Una versión desconocida se rechaza sin mover ni sobrescribir el archivo (código `4`). Un archivo corrupto se mueve a `*.corrupt-<timestamp UTC>` y el proceso falla con `4`; nunca se sobrescribe en silencio.
+- **Motivo:** el cierre debe sobrevivir a un corte entre la escritura del historial (inmutable) y la del estado; si el historial manda, el estado se reconcilia solo en la siguiente ejecución.
+- **Alternativas descartadas:** guardar el cierre solo en `state.json` (un estado perdido reabriría un mes inmutable); usar SQLite u otro motor (fuera de alcance); reescribir el archivo corrupto (pierde evidencia y puede perder datos).
+- **Consecuencias:** dos escrituras atómicas en el cierre; `status` sigue mostrando el resto si un historial está corrupto y sale `4`. La lectura es estricta (`DisallowUnknownFields`): cualquier campo nuevo exige subir `schema_version` y migrar el estado; así una versión más nueva se rechaza sin cuarentena y una más vieja no pierde campos al reescribir.
+
+## Hora del bucket y ventana de consulta (Hito 2, 2026-11-07)
+
+- **Decisión:** el timestamp agregado de OCI marca el final de la ventana, así que un punto alineado a la hora se almacena en la hora anterior (`BucketHour`); un punto no alineado cae en la hora que lo contiene. La ventana de cada ejecución empieza en `min(ahora − requery_window, bucket más antiguo que necesite atención)`, acotada por el inicio del mes y por la retención, y termina en la hora completa (o en el fin de mes para la finalización).
+- **Motivo:** evita duplicar o desplazar una hora y da un único criterio para la reconsulta de 48 h y para la recuperación tras un apagado.
+- **Alternativas descartadas:** usar el timestamp tal cual (una hora de desfase); truncar siempre sin mirar la alineación (mezcla puntos de borde); consultar siempre el mes completo (gasto y latencia innecesarios).
+- **Consecuencias:** los tests cubren puntos alineados y no alineados; si OCI cambiara la semántica, se revisa una sola función.
+
+## Clasificación de horas sin datapoint (Hito 2, 2026-11-07)
+
+- **Decisión:** una hora reciente (fin dentro de `publication_latency_hours`) es `provisional` aunque no tenga punto. Pasado el margen: con punto → `complete`; sin punto y VNIC visible → `no_data` (0); sin punto y VNIC nunca visible o hora anterior a su primera visibilidad → `incomplete`. Una respuesta con éxito que omite un punto ya confirmado no borra el dato: solo se reescriben las horas con punto recibido y las que son `provisional`, `incomplete` o faltan.
+- **Motivo:** no declarar ceros antes de que OCI publique y no perder datos por una respuesta parcial o vacía; el acumulado nunca debe presentarse como exacto si no lo es.
+- **Alternativas descartadas:** marcar `no_data` en cuanto falta el punto (adelanta un cero falso); sobrescribir todo el rango con la respuesta (una respuesta vacía borraría el mes); tratar la ausencia como 0 sin mirar visibilidad (un OCID mal escrito pasaría inadvertido).
+- **Consecuencias:** el bucket guarda `captured_at`; `no_data` no invalida el acumulado; una racha solo invalida si OCI publica ceros. La política `PublishZeros` queda en `false` hasta la validación empírica y no es configuración de usuario: se ajusta en código cuando se confirme. Con `PublishZeros=false` (se asume que OCI omite los ceros) no se aplica la exigencia de datos antes y después; al activarla, esa exigencia y su test son parte del mismo cambio.
+
+## Visibilidad de VNIC y warning (Hito 2, 2026-11-07)
+
+- **Decisión:** la visibilidad se infiere de los datapoints, no de `ListMetrics`: se persisten `first_visible`, `last_visible`, `last_data_at` y `visible` por VNIC. Si una VNIC con datos previos no devuelve ninguno en una ejecución con al menos una consulta exitosa, se marca `visible=false`, se fija `warning_since` una sola vez y `status` muestra el aviso. Una VNIC que nunca apareció no genera warning: sus horas son `incomplete` y cuentan para el error persistente.
+- **Motivo:** `ListMetrics` no prueba existencia y no tiene ventana de actividad documentada; los datapoints son la señal que ya se consulta y no requieren permisos nuevos.
+- **Alternativas descartadas:** usar `ListMetrics` en `run` (permisos y semántica ya descartados en el Hito 1); alertar en cada ejecución (ruido); borrar los buckets confirmados de una VNIC que desaparece (perdería datos reales).
+- **Consecuencias:** una VNIC con 48 h de tráfico cero puede parecer “desaparecida”; el aviso lo dice y `last_visible` da contexto. El warning se emite en la transición, no en cada ejecución.
+
+## Correcciones y cierre de mes (Hito 2, 2026-11-07)
+
+- **Decisión:** una corrección es un cambio de bytes de un bucket existente; se cuenta por mes en `state.months` con el delta acumulado. Durante la gracia (`requery_window`) actualiza el total y `status`; después del cierre el historial es inmutable, la corrección se descarta y se cuenta en `CollectReport.LateCorrections`, que `Collect` registra por `CollectOptions.Logf` cuando el llamador lo proporciona. Un mes se finaliza en la primera ejecución con consulta exitosa que cubra hasta el fin de mes y cumpla `ahora >= fin de mes + requery_window`; si no queda nada que recuperar, basta con marcarlo sin consultar.
+- **Motivo:** evita reenviar o reevaluar meses cerrados y mantiene un criterio único para la gracia; la diferencia en bytes es la señal útil de una corrección.
+- **Alternativas descartadas:** gracia fija de 7 días; reabrir meses finalizados; contar como corrección un cambio de estado sin cambio de bytes (inflaría el conteo con cada `provisional → complete`).
+- **Consecuencias:** `status` muestra buckets corregidos y delta; las alertas del mes cerrado no se reevalúan (Hito 3).
+
+## Qué meses se examinan y huecos irrecuperables (Hito 2, 2026-11-07)
+
+- **Decisión:** se examinan los meses desde la última traza (`last_run` o `last_successful_query`) o el horizonte de retención de 90 días, lo que sea posterior, más cualquier mes con historial dentro de la retención. Una instalación nueva examina solo el mes en curso. Las horas anteriores al horizonte de retención se rellenan como `incomplete` y el resto del mes se consulta si los datos siguen en retención; el mes se finaliza aunque el acumulado quede incompleto.
+- **Motivo:** recuperar lo que OCI todavía conserva sin inventar meses previos a la instalación ni crear meses fantasma; un hueco irrecuperable debe verse como incompleto, no como cero exacto.
+- **Alternativas descartadas:** examinar siempre el mes anterior (una instalación nueva “recuperaría” un mes que nunca vigiló); ignorar los huecos fuera de retención (el acumulado se presentaría exacto); no finalizar nunca un mes con huecos (se reconsultaría para siempre).
+- **Consecuencias:** el historial existente es el ancla de los meses que se recuperan; un mes totalmente anterior a la retención no se examina ni se marca.
+
+## Lock y `status` (Hito 2, 2026-11-07)
+
+- **Decisión:** `flock` exclusivo y no bloqueante con `syscall.Flock` (sin dependencia nueva) sobre `<state_dir>/lock`; `status` lee sin lock. `Collect` exige que el llamador tenga el lock; lo toma `run` en el Hito 4. `status` no escribe estado ni historial; la única escritura posible es la cuarentena de un archivo corrupto a `*.corrupt-<timestamp>`, tras la cual sale `4`. `--dry-run` carga estado e historial sin cuarentena (`persistence.LoadOptions{Quarantine:false}`). `status` sale `4` también con un esquema desconocido, pero sigue mostrando lo legible; sale `2` si la configuración es inválida.
+- **Motivo:** no añadir dependencias, no crear locks obsoletos y no bloquear una lectura de diagnóstico.
+- **Alternativas descartadas:** `gofrs/flock` (ya es indirecta, pero no hace falta); lock en `status` (bloquearía el diagnóstico); lock por archivo (el estado y el historial deben bloquearse juntos).
+- **Consecuencias:** el test de concurrencia verifica la exclusión y que las escrituras atómicas concurrentes no dejan JSON inválido; el mapeo de `ErrLocked` a código `6` se completa en el Hito 4.
+
 ## Casos de operación
 
 - **Decisión:** `network.enabled=false` hace que `run` salga `0` sin consultar OCI. `telegram.enabled=false` evalúa y registra en log y `status`, pero no encola, no envía pendientes ni marca como enviado; la caducidad de 7 días sigue aplicando a la cola existente y, al habilitar, se colapsa lo vigente y se emite una sola alerta con el nivel actual. `test-telegram` funciona si hay credenciales, aunque esté deshabilitado. `status` muestra el mes actual y el anterior; si el anterior no está finalizado, lo marca como “no finalizado (en gracia)” con las correcciones acumuladas. Si una VNIC que antes era visible deja de aparecer en `ListMetrics`, se emite un warning en log y `status`; no se marcan buckets como `incomplete`. Una versión de esquema desconocida sale `4` sin sobrescribir. Si una VNIC falla y otras responden, la afectada queda `incomplete`, se continúa con las demás y se sale `3` con el total marcado como incompleto.
