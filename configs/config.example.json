@@ -1,0 +1,32 @@
+{
+  "oci": {
+    "region": "us-ashburn-1",
+    "auth": "instance_principal"
+  },
+  "network": {
+    "enabled": true,
+    "compartment_ocid": "ocid1.compartment.oc1..cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "instance_ocid": "ocid1.instance.oc1.iad.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "vnic_ocids": [
+      "ocid1.vnic.oc1.iad.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    ],
+    "monthly_limit_gib": 10240,
+    "alert_percentages": [50, 75, 90, 100],
+    "high_traffic_6h_gib": 100,
+    "requery_window_hours": 48,
+    "publication_latency_hours": 2,
+    "no_data_streak_hours": 6,
+    "collection_failure_threshold": 3,
+    "collection_failure_cooldown_hours": 24,
+    "collect_inbound": false
+  },
+  "telegram": {
+    "enabled": true
+  },
+  "storage": {
+    "state_dir": "/var/lib/oci-infrastructure-monitor"
+  },
+  "logging": {
+    "level": "info"
+  }
+}

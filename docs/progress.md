@@ -6,10 +6,10 @@
 
 | Campo | Valor |
 |---|---|
-| Hito en curso | Hito 1 — 1A (investigación) completado; 1B (config) y 1C (cliente/check/version) pendientes |
+| Hito en curso | Hito 1 — 1A y 1B completados; 1C (cliente OCI, `check`, `version`) pendiente |
 | Último hito cerrado | — |
-| Última verificación ejecutada | 2026-11-07 — documentación; sin código Go todavía |
-| Resultado de la verificación | H1A documentado; no se ejecutó `go build`/`go test` porque no hay paquetes |
+| Última verificación ejecutada | 2026-11-07 — `go build`, `go vet`, `go test` y `go test -race` |
+| Resultado de la verificación | OK en `internal/config`; aún no hay cliente OCI |
 | Pendiente de validación real | `check` contra OCI, Dynamic Group, Telegram, timer systemd |
 
 ## Plantilla de cierre de hito
@@ -93,10 +93,40 @@ Copiar este bloque al cerrar cada hito y rellenarlo con datos reales:
 - Después 1C: interfaz/cliente de Monitoring con Instance Principals, `check` y `version`.
 - No cerrar el Hito 1 hasta completar 1B, 1C y los tests con mocks.
 
+### 2026-11-07 — Hito 1B: configuración estricta (Hito 1 sigue abierto)
+
+**Completado**
+
+- `internal/config`: carga JSON con `DisallowUnknownFields`, defaults documentados, validación de OCIDs, umbrales, rutas absolutas, niveles de log y límites.
+- `configs/config.example.json` válido y sin secretos.
+- Tests de configuración: ejemplo, defaults, campos desconocidos, JSON inválido, umbrales, OCIDs, duplicados, rutas, niveles y red deshabilitada.
+
+**Parcial o pendiente**
+
+- 1C: interfaz y cliente de OCI Monitoring, `check` y `version`.
+- Confirmaciones empíricas de publicación de ceros, semántica de `sum()` y latencia.
+
+**Verificación ejecutada**
+
+| Comando | Resultado | Fecha |
+|---|---|---|
+| `go build ./...` | OK | 2026-11-07 |
+| `go vet ./...` | OK | 2026-11-07 |
+| `go test ./...` | OK (`internal/config`) | 2026-11-07 |
+| `go test -race ./...` | OK (`internal/config`) | 2026-11-07 |
+
+**Decisiones nuevas**
+
+- Sin decisiones nuevas; se implementaron las reglas ya registradas.
+
+**Para la siguiente sesión**
+
+- Implementar 1C: interfaz `internal/oci`, cliente de Monitoring con Instance Principals y mock, `check` y `version`.
+- No cerrar el Hito 1 hasta que `check` no escriba estado y los tests del cliente estén en verde.
+
 ## Validaciones pendientes del Hito 1
 
-- [ ] ¿OCI publica puntos con valor 0 o los omite? (no hay declaración oficial; falta prueba empírica)
-- [x] ¿`ListMetrics` sobre `oci_vcn` está cubierto por `read metrics`? Sí: `read` incluye `inspect`, que es el mínimo para listar definiciones.
+- [ ] ¿OCI publica puntos con valor 0 o los omite? (no hay declaración oficial; falta prueba empírica)- [x] ¿`ListMetrics` sobre `oci_vcn` está cubierto por `read metrics`? Sí: `read` incluye `inspect`, que es el mínimo para listar definiciones.
 - [x] ¿La dimensión `resourceId` identifica la VNIC en este namespace? Sí, según VNIC Metrics.
 - [x] ¿Qué ventana de actividad usa `ListMetrics`? No hay una publicada; se documenta la limitación y se usa `last_visible`, sin inferir existencia.
 - [x] Retención, resolución mínima, latencia, agregación y límites documentados. Retención 90 días; 1m/5m/1h/1d con máximos 7/30/90/90 días; 100.000 datapoints; 10 TPS; latencia no publicada (2 h provisional); agregación `sum()` pendiente de confirmación empírica.

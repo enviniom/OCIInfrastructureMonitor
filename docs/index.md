@@ -6,13 +6,14 @@ Este índice es el punto de entrada al plan de trabajo. El roadmap original se c
 
 ## Estado
 
-- **Implementación:** no iniciada.
-- **Repositorio:** existen `go.mod` (`go 1.27.3`) y `Roadmap.md`; git inicializado con el commit de documentación; aún no hay código ni `README.md`.
+- **Implementación:** iniciada; `internal/config` y `configs/config.example.json` listos. Cliente OCI, `check` y `version` pendientes.
+- **Repositorio:** `go.mod` (`go 1.27.3`), `Roadmap.md` y git inicializado; aún no hay `README.md`.
 - [x] Roadmap dividido en 5 hitos autocontenidos (2026-11-07).
 - [x] Índice de hitos con casillas de seguimiento.
 - [x] Plantillas [`progress.md`](progress.md) y [`decisions.md`](decisions.md) creadas.
 - [x] Contratos iniciales de diseño cerrados con el autor del roadmap (2026-11-07).
 - [x] Hito 1A: investigación de OCI Monitoring y permisos documentada (2026-11-07). Ver [`architecture.md`](architecture.md) y [`oci-permissions.md`](oci-permissions.md).
+- [x] Hito 1B: configuración estricta, ejemplo y tests de `internal/config` (2026-11-07).
 
 ## Cómo se usa este índice
 

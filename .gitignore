@@ -17,3 +17,7 @@ history/
 # Sistema y editor
 .DS_Store
 *.swp
+
+# Caché local de Go
+.cache/
+.tmp/

@@ -152,6 +152,7 @@ Ejemplo conceptual (valores de ejemplo, no límites confirmados de la tenancy):
   "oci": { "region": "us-ashburn-1", "auth": "instance_principal" },
   "network": {
     "enabled": true,
+    "compartment_ocid": "",
     "instance_ocid": "",
     "vnic_ocids": [],
     "monthly_limit_gib": 10240,
@@ -170,14 +171,14 @@ Ejemplo conceptual (valores de ejemplo, no límites confirmados de la tenancy):
 }
 ```
 
-Validación estricta: campos desconocidos rechazados, rangos válidos, OCIDs con formato correcto, rutas absolutas. `alert_percentages` debe tener exactamente 4 valores enteros, estrictamente crecientes, el primero mayor que 0 y el último igual a 100; la severidad se asigna por posición. `monthly_limit_gib` y `high_traffic_6h_gib` deben ser mayores que 0; `requery_window_hours`, `publication_latency_hours`, `no_data_streak_hours`, `collection_failure_threshold` y `collection_failure_cooldown_hours` deben ser mayores o iguales que 1. La unidad es siempre GiB (1 GiB = 2^30 bytes); no se admite GB decimal. La ruta por defecto del archivo es `/etc/oci-infrastructure-monitor/config.json` y se puede cambiar con `--config`.
+Validación estricta: campos desconocidos rechazados, rangos válidos, OCIDs con formato correcto, rutas absolutas. `alert_percentages` debe tener exactamente 4 valores enteros, estrictamente crecientes, el primero mayor que 0 y el último igual a 100; la severidad se asigna por posición. `monthly_limit_gib` y `high_traffic_6h_gib` deben ser mayores que 0; `requery_window_hours`, `publication_latency_hours`, `no_data_streak_hours`, `collection_failure_threshold` y `collection_failure_cooldown_hours` deben ser mayores o iguales que 1. `compartment_ocid` es el compartimento de la subred donde viven las métricas de la VNIC. La unidad es siempre GiB (1 GiB = 2^30 bytes); no se admite GB decimal. La ruta por defecto del archivo es `/etc/oci-infrastructure-monitor/config.json` y se puede cambiar con `--config`.
 
 ## 6. Entregables
 
 - [x] Investigación de la sección 4.1 documentada en `docs/architecture.md`, con los 12 puntos y enlaces a la fuente oficial.
 - [x] `docs/oci-permissions.md` con la política restrictiva propuesta (por compartimento o con condición sobre `oci_vcn`), su sintaxis verificada, cuándo conviene y la limitación de `check`: sin permisos de red no se distingue una VNIC inexistente de una sin actividad; la verificación de existencia real queda como opt-in futuro.
-- [ ] Paquete `internal/config` con validación estricta y tests, incluida la ruta por defecto `/etc/oci-infrastructure-monitor/config.json` y el flag `--config`.
-- [ ] `configs/config.example.json` con valores de ejemplo, sin secretos, que valide con el paquete `config`.
+- [x] Paquete `internal/config` con validación estricta y tests, incluida la ruta por defecto `/etc/oci-infrastructure-monitor/config.json` y el flag `--config`.
+- [x] `configs/config.example.json` con valores de ejemplo, sin secretos, que valide con el paquete `config`.
 - [ ] Interfaz del cliente de OCI Monitoring y cliente con Instance Principals, con mock para tests.
 - [ ] Consultas con troceo y paginación según los límites investigados.
 - [ ] Comando `check` que valida formato y visibilidad en métricas: OCID mal formado (sale `2`, configuración), VNIC visible en la retención o VNIC no visible (puede no existir, no tener métricas o no haber tenido tráfico; sale `0` con warning). Solo una consulta fallida sale `3`. Usa `ListMetrics` sin permisos nuevos; **no escribe configuración ni estado**.
@@ -187,16 +188,17 @@ Validación estricta: campos desconocidos rechazados, rangos válidos, OCIDs con
 ## 7. Criterio de cierre
 
 - [ ] Tests de configuración y del cliente (con mocks) en verde.
-- [ ] El ejemplo de configuración valida sin errores y no contiene secretos.
-- [ ] La validación rechaza `alert_percentages` con distinto de 4 valores, valores no crecientes, primero 0 o último distinto de 100.
+- [x] El ejemplo de configuración valida sin errores y no contiene secretos.
+- [x] La validación rechaza `alert_percentages` con distinto de 4 valores, valores no crecientes, primero 0 o último distinto de 100.
 - [x] Límites, unidades, agregación y comportamiento de OCI con los ceros documentados con enlaces a la fuente oficial.
 - [x] Documentado si `ListMetrics` sobre `oci_vcn` está cubierto por `read metrics` y si `resourceId` identifica la VNIC.
+- [x] Documentada la ventana de actividad de `ListMetrics` (no hay una publicada; se documenta la limitación y el uso de `last_visible`).
 - [ ] `check` distingue OCID mal formado, VNIC visible en métricas y VNIC no visible, con el mensaje exacto de los tres casos.
 - [ ] Una VNIC no visible sale `0` con warning; un OCID mal formado sale `2`; solo una consulta fallida sale `3`.
-- [x] Documentada la ventana de actividad de `ListMetrics` (no hay una publicada; se documenta la limitación y el uso de `last_visible`).
 - [ ] El comando `check` no crea ni modifica archivos de estado ni de configuración (verificado por test o revisión explícita).
-- [ ] No se añadieron dependencias fuera del SDK oficial de OCI y la librería estándar sin justificación en `decisions.md`.
-- [ ] `go build ./...`, `go vet ./...` y `go test ./...` ejecutados con resultado real reportado.
+- [x] No se añadieron dependencias fuera del SDK oficial de OCI y la librería estándar sin justificación en `decisions.md`.
+- [x] `go build ./...`, `go vet ./...` y `go test ./...` ejecutados con resultado real reportado.
+- [x] `go test -race ./...` ejecutado (config, 2026-11-07).
 - [ ] La casilla superior de este hito marcada solo después de todo lo anterior.
 
 ## 8. Evidencia y traspaso
