@@ -413,3 +413,10 @@ func TestJobMetadata(t *testing.T) {
 		t.Errorf("inbound Metric() = %q", job.Metric())
 	}
 }
+
+func TestJobQueryEndExtendsOneResolution(t *testing.T) {
+	job := Job{End: utcHour(2026, 11, 1, 0)}
+	if got := job.QueryEnd(); !got.Equal(utcHour(2026, 11, 1, 1)) {
+		t.Errorf("QueryEnd() = %s, want 01:00", got)
+	}
+}

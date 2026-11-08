@@ -59,7 +59,7 @@ func Check(ctx context.Context, cfg config.Config, client oci.Client, now time.T
 				Namespace:     oci.Namespace,
 				MQL:           fmt.Sprintf("VnicToNetworkBytes[1h]{resourceId = %q}.sum()", vnic),
 				StartTime:     start,
-				EndTime:       end,
+				EndTime:       end.Add(time.Hour),
 				Resolution:    "1h",
 			}
 			series, err := client.Summarize(ctx, query)

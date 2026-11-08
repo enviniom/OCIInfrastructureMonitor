@@ -89,7 +89,7 @@ func TestCheckVisible(t *testing.T) {
 		t.Fatalf("queries = %d, want 2", len(client.queries))
 	}
 	wantStart := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
-	wantEnd := time.Date(2026, 11, 7, 13, 0, 0, 0, time.UTC)
+	wantEnd := time.Date(2026, 11, 7, 14, 0, 0, 0, time.UTC)
 	if !client.queries[0].StartTime.Equal(wantStart) || !client.queries[0].EndTime.Equal(wantEnd) {
 		t.Errorf("query window = %v..%v, want %v..%v", client.queries[0].StartTime, client.queries[0].EndTime, wantStart, wantEnd)
 	}

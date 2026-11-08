@@ -61,7 +61,11 @@ func fullSeries(query oci.Query, value float64) []oci.Series {
 	vnic := parseVNIC(query.MQL)
 	var points []oci.Point
 	for hour := query.StartTime.UTC().Truncate(time.Hour); hour.Before(query.EndTime); hour = hour.Add(time.Hour) {
-		points = append(points, oci.Point{Time: hour.Add(time.Hour), Value: value})
+		at := hour.Add(time.Hour)
+		if !at.Before(query.EndTime) {
+			continue
+		}
+		points = append(points, oci.Point{Time: at, Value: value})
 	}
 	return []oci.Series{{ResourceID: vnic, Points: points}}
 }
@@ -253,6 +257,10 @@ func TestCollectMonthChangeFinalizesPreviousMonth(t *testing.T) {
 	}
 	if october.Len() != 744 {
 		t.Errorf("October buckets = %d, want 744", october.Len())
+	}
+	last, ok := october.Get(cfg.Network.VNICOCIDs[0], persistence.DirectionOutbound, utcHour(2026, 10, 31, 23))
+	if !ok || last.Bytes != 100 || last.Status != persistence.StatusComplete {
+		t.Errorf("last bucket = %+v (exists %v), want 100 bytes complete", last, ok)
 	}
 	summary := accumulate.Summarize(october, optionsFromConfig(cfg))
 	if summary.Outbound.Bytes != 74400 {

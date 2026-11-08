@@ -37,6 +37,13 @@ func (j Job) MQL() string {
 	return fmt.Sprintf("%s[1h]{resourceId = %q}.sum()", j.Metric(), j.VNICID)
 }
 
+// QueryEnd returns the endTime to send to OCI. Aggregated points are
+// timestamped at the end of their window and the API excludes endTime, so the
+// query must reach one resolution past the last bucket we want.
+func (j Job) QueryEnd() time.Time {
+	return j.End.Add(time.Hour)
+}
+
 // Hours returns the number of hourly buckets the window covers.
 func (j Job) Hours() int {
 	hours := int(j.End.UTC().Truncate(time.Hour).Sub(j.Start.UTC().Truncate(time.Hour)) / time.Hour)

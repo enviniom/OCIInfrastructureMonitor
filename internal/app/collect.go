@@ -192,7 +192,7 @@ func collectInternal(ctx context.Context, cfg config.Config, client oci.Client, 
 				Namespace:     oci.Namespace,
 				MQL:           job.MQL(),
 				StartTime:     job.Start,
-				EndTime:       job.End,
+				EndTime:       job.QueryEnd(),
 				Resolution:    "1h",
 			})
 			cancel()
