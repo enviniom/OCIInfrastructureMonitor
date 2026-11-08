@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -229,6 +230,12 @@ func (c *Client) sendOnce(ctx context.Context, text string) attemptResult {
 	defer response.Body.Close()
 
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	if readErr != nil {
+		return attemptResult{
+			err:   &TransportError{message: "read telegram response: " + c.redact(readErr.Error())},
+			retry: true,
+		}
+	}
 	var decoded apiResponse
 	decodeErr := json.Unmarshal(body, &decoded)
 	description := strings.TrimSpace(decoded.Description)
@@ -237,11 +244,23 @@ func (c *Client) sendOnce(ctx context.Context, text string) attemptResult {
 	}
 	description = c.redact(description)
 
+	// A 200 with an unreadable body is a transport problem, not an API
+	// rejection: retry it instead of dropping the attempt permanently.
+	if response.StatusCode == http.StatusOK && decodeErr != nil {
+		return attemptResult{
+			err:   &TransportError{message: "decode telegram response: " + c.redact(decodeErr.Error())},
+			retry: true,
+		}
+	}
+
 	switch {
 	case response.StatusCode == http.StatusOK && decoded.OK:
 		return attemptResult{}
 	case response.StatusCode == http.StatusTooManyRequests:
 		retryAfter := time.Duration(decoded.Parameters.RetryAfter) * time.Second
+		if retryAfter <= 0 {
+			retryAfter = parseRetryAfter(response.Header.Get("Retry-After"))
+		}
 		if retryAfter <= 0 {
 			retryAfter = time.Second
 		}
@@ -257,15 +276,28 @@ func (c *Client) sendOnce(ctx context.Context, text string) attemptResult {
 			retry: true,
 		}
 	case response.StatusCode == http.StatusOK && !decoded.OK:
-		if decodeErr != nil {
-			return attemptResult{err: &APIError{StatusCode: response.StatusCode, Description: "unexpected non-JSON response"}}
-		}
 		return attemptResult{err: &APIError{StatusCode: response.StatusCode, Description: description}}
-	case readErr != nil:
-		return attemptResult{err: &TransportError{message: "read telegram response: " + c.redact(readErr.Error())}, retry: true}
 	default:
 		return attemptResult{err: &APIError{StatusCode: response.StatusCode, Description: description}}
 	}
+}
+
+// parseRetryAfter accepts the seconds form and the HTTP-date form of the
+// Retry-After header. It returns 0 when the value is absent or unparseable.
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		if wait := time.Until(when); wait > 0 {
+			return wait
+		}
+	}
+	return 0
 }
 
 func (c *Client) transportError(ctx context.Context, err error) error {

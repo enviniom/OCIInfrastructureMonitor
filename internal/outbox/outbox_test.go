@@ -153,3 +153,16 @@ func TestDropKind(t *testing.T) {
 		t.Errorf("kept = %+v", kept)
 	}
 }
+
+func TestEnqueueExpiresOldEntries(t *testing.T) {
+	now := utc(2026, 11, 7, 13)
+	old := notification("anomaly_6h", "2026-10", 0, now.Add(-8*24*time.Hour))
+	fresh := notification("anomaly_6h", "2026-11", 0, now)
+	pending, result := Enqueue([]persistence.Notification{old}, fresh, now)
+	if len(pending) != 1 || !pending[0].CreatedAt.Equal(fresh.CreatedAt) {
+		t.Errorf("pending = %+v, want only the fresh entry", pending)
+	}
+	if len(result.DroppedExpired) != 1 {
+		t.Errorf("DroppedExpired = %+v, want the old entry", result.DroppedExpired)
+	}
+}

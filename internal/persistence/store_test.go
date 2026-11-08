@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -792,5 +793,52 @@ func TestFinalizedVersion1HistoryIsReadButNotReopened(t *testing.T) {
 	}
 	if string(raw) != content {
 		t.Errorf("finalized version 1 history was rewritten: %q", raw)
+	}
+}
+
+func TestSyncDir(t *testing.T) {
+	if err := syncDir(t.TempDir()); err != nil {
+		t.Fatalf("syncDir(valid) = %v", err)
+	}
+	if err := syncDir(filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Fatal("syncDir(missing) = nil, want an error")
+	}
+}
+
+func TestPeekSchemaRejectsNonObject(t *testing.T) {
+	for _, data := range []string{"null", "{}", "[]", `"x"`, "0", ""} {
+		if _, err := peekSchema([]byte(data)); err == nil {
+			t.Errorf("peekSchema(%q) = nil, want an error", data)
+		}
+	}
+}
+
+func TestLoadStateNullIsCorrupt(t *testing.T) {
+	for _, data := range []string{"null", "{}"} {
+		store := newTestStore(t)
+		if err := os.WriteFile(store.StatePath(), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := store.LoadStateWith(LoadOptions{Quarantine: false})
+		if !errors.Is(err, ErrCorrupt) {
+			t.Errorf("LoadStateWith(%q) = %v, want ErrCorrupt", data, err)
+		}
+	}
+}
+
+func TestStateValidationPendingPeriodAndUniqueness(t *testing.T) {
+	state := NewState()
+	state.Pending = []Notification{{Kind: NotificationAnomaly6H, CreatedAt: utc(2026, 11, 7, 13)}}
+	if err := state.Validate(); err == nil || !strings.Contains(err.Error(), "no period") {
+		t.Errorf("Validate() = %v, want a no-period error", err)
+	}
+
+	state = NewState()
+	state.Pending = []Notification{
+		{Kind: NotificationAnomaly6H, Period: "2026-11", CreatedAt: utc(2026, 11, 7, 13)},
+		{Kind: NotificationAnomaly6H, Period: "2026-11", CreatedAt: utc(2026, 11, 7, 13)},
+	}
+	if err := state.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("Validate() = %v, want a duplicate error", err)
 	}
 }

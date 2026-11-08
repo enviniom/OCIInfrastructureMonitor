@@ -270,3 +270,76 @@ func TestRedactRemovesToken(t *testing.T) {
 		t.Errorf("redact() = %q, want a redaction marker", got)
 	}
 }
+
+func TestClientRetriesTruncatedOKResponse(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"ok":true,"result":`)
+	}))
+	defer server.Close()
+
+	client, _ := New(testCredentials(), Options{
+		BaseURL:        server.URL,
+		MaxAttempts:    3,
+		InitialBackoff: time.Millisecond,
+		Sleep:          func(context.Context, time.Duration) error { return nil },
+	})
+	err := client.SendMessage(context.Background(), "hola")
+	if err == nil {
+		t.Fatal("SendMessage() error = nil")
+	}
+	var transportErr *TransportError
+	if !errors.As(err, &transportErr) {
+		t.Fatalf("error = %#v, want *TransportError", err)
+	}
+	if requests != 3 {
+		t.Errorf("requests = %d, want 3 retries", requests)
+	}
+}
+
+func TestClientOKFalseIsPermanent(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusOK)
+		io.WriteString(w, `{"ok":false,"description":"chat not found"}`)
+	}))
+	defer server.Close()
+
+	client, _ := New(testCredentials(), Options{BaseURL: server.URL})
+	err := client.SendMessage(context.Background(), "hola")
+	if err == nil {
+		t.Fatal("SendMessage() error = nil")
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %#v, want *APIError", err)
+	}
+	if requests != 1 {
+		t.Errorf("requests = %d, want 1", requests)
+	}
+}
+
+func TestClient429HeaderRetryAfter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"ok":false,"description":"Too Many Requests"}`)
+	}))
+	defer server.Close()
+
+	client, _ := New(testCredentials(), Options{BaseURL: server.URL})
+	result := client.sendOnce(context.Background(), "hola")
+	if result.err == nil || !result.retry {
+		t.Fatalf("result = %+v, want a retryable error", result)
+	}
+	var retryErr *RetryAfterError
+	if !errors.As(result.err, &retryErr) {
+		t.Fatalf("error = %#v, want *RetryAfterError", result.err)
+	}
+	if retryErr.RetryAfter != 7*time.Second {
+		t.Errorf("RetryAfter = %s, want 7s", retryErr.RetryAfter)
+	}
+}

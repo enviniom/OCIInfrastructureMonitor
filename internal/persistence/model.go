@@ -472,6 +472,7 @@ func (s State) Validate() error {
 			return fmt.Errorf("state: vnic %s has a warning but was never visible", id)
 		}
 	}
+	seenPending := make(map[string]struct{}, len(s.Pending))
 	for i, n := range s.Pending {
 		if n.Kind == "" {
 			return fmt.Errorf("state: pending notification %d has no kind", i)
@@ -479,11 +480,17 @@ func (s State) Validate() error {
 		if !ValidNotificationKind(n.Kind) {
 			return fmt.Errorf("state: pending notification %d has unknown kind %q", i, n.Kind)
 		}
-		if n.Period != "" {
-			if _, err := MonthStart(n.Period); err != nil {
-				return fmt.Errorf("state: pending notification %d has invalid period %q", i, n.Period)
-			}
+		if n.Period == "" {
+			return fmt.Errorf("state: pending notification %d has no period", i)
 		}
+		if _, err := MonthStart(n.Period); err != nil {
+			return fmt.Errorf("state: pending notification %d has invalid period %q", i, n.Period)
+		}
+		key := n.Kind + "\x00" + n.Period
+		if _, duplicate := seenPending[key]; duplicate {
+			return fmt.Errorf("state: duplicate pending notification for %s %s", n.Kind, n.Period)
+		}
+		seenPending[key] = struct{}{}
 		if n.Level < 0 || n.Level > 100 {
 			return fmt.Errorf("state: pending notification %d has invalid level %d", i, n.Level)
 		}

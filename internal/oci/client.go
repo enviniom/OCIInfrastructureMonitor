@@ -48,10 +48,28 @@ type Client interface {
 	ListMetrics(ctx context.Context, compartmentID, namespace string, dimensionFilters map[string]string) ([]MetricDefinition, error)
 }
 
+// monitoringAPI is the subset of monitoring.MonitoringClient used here. The
+// interface keeps RealClient testable without a live OCI endpoint.
+type monitoringAPI interface {
+	SummarizeMetricsData(context.Context, monitoring.SummarizeMetricsDataRequest) (monitoring.SummarizeMetricsDataResponse, error)
+	ListMetrics(context.Context, monitoring.ListMetricsRequest) (monitoring.ListMetricsResponse, error)
+}
+
 // RealClient implements Client with the official OCI SDK and Instance Principals.
 type RealClient struct {
-	client monitoring.MonitoringClient
+	client monitoringAPI
 }
+
+// Retry policy for the Monitoring calls. A short retry absorbs a transient
+// 429/5xx without hiding a permanent error; the caller's query timeout bounds
+// the total.
+const (
+	retryMaxAttempts = 3
+	retryMaxBackoff  = time.Second
+)
+
+// retryInitialBackoff is a variable so tests can avoid real waits.
+var retryInitialBackoff = 250 * time.Millisecond
 
 // New creates a Monitoring client authenticated with Instance Principals.
 func New(region string) (*RealClient, error) {
@@ -81,16 +99,22 @@ func (c *RealClient) Summarize(ctx context.Context, query Query) ([]Series, erro
 		details.Resolution = common.String(query.Resolution)
 	}
 
-	resp, err := c.client.SummarizeMetricsData(ctx, monitoring.SummarizeMetricsDataRequest{
+	request := monitoring.SummarizeMetricsDataRequest{
 		CompartmentId:               common.String(query.CompartmentID),
 		SummarizeMetricsDataDetails: details,
+	}
+	var response monitoring.SummarizeMetricsDataResponse
+	err := retry(ctx, func() error {
+		var callErr error
+		response, callErr = c.client.SummarizeMetricsData(ctx, request)
+		return callErr
 	})
 	if err != nil {
 		return nil, fmt.Errorf("summarize metrics: %w", err)
 	}
 
-	series := make([]Series, 0, len(resp.Items))
-	for _, item := range resp.Items {
+	series := make([]Series, 0, len(response.Items))
+	for _, item := range response.Items {
 		s := Series{
 			ResourceID: item.Dimensions["resourceId"],
 			Points:     make([]Point, 0, len(item.AggregatedDatapoints)),
@@ -108,7 +132,7 @@ func (c *RealClient) Summarize(ctx context.Context, query Query) ([]Series, erro
 
 // ListMetrics lists metric definitions, following pagination.
 func (c *RealClient) ListMetrics(ctx context.Context, compartmentID, namespace string, dimensionFilters map[string]string) ([]MetricDefinition, error) {
-	req := monitoring.ListMetricsRequest{
+	request := monitoring.ListMetricsRequest{
 		CompartmentId: common.String(compartmentID),
 		ListMetricsDetails: monitoring.ListMetricsDetails{
 			Namespace:        common.String(namespace),
@@ -118,23 +142,55 @@ func (c *RealClient) ListMetrics(ctx context.Context, compartmentID, namespace s
 
 	var definitions []MetricDefinition
 	for {
-		resp, err := c.client.ListMetrics(ctx, req)
+		var response monitoring.ListMetricsResponse
+		err := retry(ctx, func() error {
+			var callErr error
+			response, callErr = c.client.ListMetrics(ctx, request)
+			return callErr
+		})
 		if err != nil {
 			return nil, fmt.Errorf("list metrics: %w", err)
 		}
-		for _, item := range resp.Items {
+		for _, item := range response.Items {
 			definitions = append(definitions, MetricDefinition{
 				Name:       deref(item.Name),
 				Namespace:  deref(item.Namespace),
 				Dimensions: item.Dimensions,
 			})
 		}
-		if resp.OpcNextPage == nil || *resp.OpcNextPage == "" {
+		if response.OpcNextPage == nil || *response.OpcNextPage == "" {
 			break
 		}
-		req.Page = resp.OpcNextPage
+		request.Page = response.OpcNextPage
 	}
 	return definitions, nil
+}
+
+// retry calls call until it succeeds, fails permanently or the retry budget is
+// exhausted. Only errors that the OCI SDK classifies as retryable are retried.
+func retry(ctx context.Context, call func() error) error {
+	wait := retryInitialBackoff
+	var err error
+	for attempt := 1; attempt <= retryMaxAttempts; attempt++ {
+		if err = call(); err == nil {
+			return nil
+		}
+		if attempt == retryMaxAttempts || !common.IsErrorRetryableByDefault(err) {
+			return err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+		wait *= 2
+		if wait > retryMaxBackoff {
+			wait = retryMaxBackoff
+		}
+	}
+	return err
 }
 
 func deref(value *string) string {

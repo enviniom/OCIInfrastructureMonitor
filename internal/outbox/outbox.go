@@ -53,6 +53,7 @@ func Expire(pending []persistence.Notification, now time.Time) ([]persistence.No
 // anomaly or a repeated collection notification is kept as the existing entry.
 func Enqueue(pending []persistence.Notification, notification persistence.Notification, now time.Time) ([]persistence.Notification, Result) {
 	result := Result{}
+	pending, result.DroppedExpired = Expire(pending, now)
 	for i, existing := range pending {
 		if existing.Kind != notification.Kind || existing.Period != notification.Period {
 			continue

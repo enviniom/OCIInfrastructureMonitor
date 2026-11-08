@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -365,6 +366,9 @@ func (s *Store) quarantine(path string, cause error) error {
 	if err := os.Rename(path, target); err != nil {
 		return &CorruptionError{Path: path, Err: fmt.Errorf("%w (cannot move aside: %v)", cause, err)}
 	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return &CorruptionError{Path: path, MovedTo: target, Err: fmt.Errorf("%w (directory fsync: %v)", cause, err)}
+	}
 	return &CorruptionError{Path: path, MovedTo: target, Err: cause}
 }
 
@@ -392,11 +396,18 @@ func SupportedSchemaVersion(version int) bool {
 }
 
 func peekSchema(data []byte) (int, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return 0, errors.New("file is not a JSON object")
+	}
 	var header struct {
 		SchemaVersion int `json:"schema_version"`
 	}
-	if err := json.Unmarshal(data, &header); err != nil {
+	if err := json.Unmarshal(trimmed, &header); err != nil {
 		return 0, err
+	}
+	if header.SchemaVersion == 0 {
+		return 0, errors.New("missing schema_version")
 	}
 	return header.SchemaVersion, nil
 }
@@ -451,9 +462,25 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmpName)
 		return fmt.Errorf("rename temporary file over %q: %w", path, err)
 	}
-	if dirHandle, err := os.Open(dir); err == nil {
-		_ = dirHandle.Sync()
-		_ = dirHandle.Close()
+	if err := syncDir(dir); err != nil {
+		return fmt.Errorf("fsync directory for %q: %w", path, err)
+	}
+	return nil
+}
+
+// syncDir fsyncs a directory so a rename survives a power loss. Some
+// filesystems do not support fsync on directories; those errors are ignored.
+func syncDir(dir string) error {
+	handle, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer handle.Close()
+	if err := handle.Sync(); err != nil {
+		if errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) {
+			return nil
+		}
+		return err
 	}
 	return nil
 }
