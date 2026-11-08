@@ -14,16 +14,16 @@ La guía está separada por entornos:
 
 ## Mapa rápido de archivos
 
-| Archivo en desarrollo | Destino en el servidor | Permisos |
-|---|---|---|
-| `dist/oci-infrastructure-monitor-linux-arm64` | `/usr/local/bin/oci-infrastructure-monitor` | `0755 root:root` |
-| `dist/SHA256SUMS` | Se usa para verificar; no se instala | — |
-| `configs/config.example.json` | `/etc/oci-infrastructure-monitor/config.json` | `0640 root:oci-monitor` |
-| `systemd/oci-infrastructure-monitor.service` | `/etc/systemd/system/oci-infrastructure-monitor.service` | `0644 root:root` |
-| `systemd/oci-infrastructure-monitor.timer` | `/etc/systemd/system/oci-infrastructure-monitor.timer` | `0644 root:root` |
-| `README.md` y `docs/*.md` (opcional) | `/usr/local/share/doc/oci-infrastructure-monitor/` | `0644 root:root` |
-| — (se crea en el servidor) | `/etc/oci-infrastructure-monitor/telegram.env` | `0600 oci-monitor:oci-monitor` |
-| — (se crea con systemd) | `/var/lib/oci-infrastructure-monitor/` | `0700 oci-monitor:oci-monitor` |
+| Archivo en desarrollo | Se sube a | Destino final | Permisos |
+|---|---|---|---|
+| `dist/oci-infrastructure-monitor-linux-arm64` | `/home/opc/deploys/oci-infrastructure-monitor-linux-arm64` | `/usr/local/bin/oci-infrastructure-monitor` | `0755 root:root` |
+| `dist/SHA256SUMS.deploy` | `/home/opc/deploys/SHA256SUMS` | Se usa para verificar; no se instala | — |
+| `configs/config.example.json` | `/home/opc/deploys/config.example.json` | `/etc/oci-infrastructure-monitor/config.json` | `0640 root:oci-monitor` |
+| `systemd/oci-infrastructure-monitor.service` | `/home/opc/deploys/oci-infrastructure-monitor.service` | `/etc/systemd/system/oci-infrastructure-monitor.service` | `0644 root:root` |
+| `systemd/oci-infrastructure-monitor.timer` | `/home/opc/deploys/oci-infrastructure-monitor.timer` | `/etc/systemd/system/oci-infrastructure-monitor.timer` | `0644 root:root` |
+| `README.md` y `docs/*.md` (opcional) | `/home/opc/deploys/` (planos) | `/usr/local/share/doc/oci-infrastructure-monitor/` | `0644 root:root` |
+| — (se crea en el servidor) | — | `/etc/oci-infrastructure-monitor/telegram.env` | `0600 oci-monitor:oci-monitor` |
+| — (se crea con systemd) | — | `/var/lib/oci-infrastructure-monitor/` | `0700 oci-monitor:oci-monitor` |
 
 El servidor **no necesita Git, Go ni compilador**. Solo recibe estos archivos y ejecuta el binario. El binario es autocontenido: no se suben `go.mod`, `go.sum`, `.git` ni el resto de `dist/`.
 
@@ -68,59 +68,48 @@ dist/oci-infrastructure-monitor-linux-arm64: ELF 64-bit LSB executable, ARM aarc
 
 `vcs.modified=false` es obligatorio para un release. Si es `true`, el árbol tenía cambios y el binario no es reproducible desde ese commit.
 
-### 1.3 Verificar el artefacto antes de subirlo
+### 1.3 Verificar el artefacto y generar el checksum de la carga
 
 ```bash
 file dist/oci-infrastructure-monitor-linux-arm64
-sha256sum dist/oci-infrastructure-monitor-linux-arm64
 go version -m dist/oci-infrastructure-monitor-linux-arm64 | grep 'vcs\.'
-cat dist/SHA256SUMS
+(cd dist && sha256sum oci-infrastructure-monitor-linux-arm64) > dist/SHA256SUMS.deploy
+cat dist/SHA256SUMS.deploy
 ```
 
-El binario es estático y ARM64; no depende de glibc ni de Go en el servidor.
+El binario es estático y ARM64; no depende de glibc ni de Go en el servidor. `dist/SHA256SUMS` es el que genera el Makefile con rutas `dist/...`; `dist/SHA256SUMS.deploy` es el que se sube a `/home/opc/deploys` y verifica el archivo plano. Ambos contienen el mismo hash.
 
-### 1.4 Preparar el directorio de entrega
+### 1.4 Subir los archivos a `/home/opc/deploys`
 
-Crea un directorio temporal con la estructura que espera el servidor:
+El servidor no usa carpetas temporales: la carpeta de carga es `/home/opc/deploys`; desde ahí se instala en los destinos de la Parte 2.
 
 ```bash
-rm -rf /tmp/oci-monitor-deploy
-mkdir -p /tmp/oci-monitor-deploy/dist \
-         /tmp/oci-monitor-deploy/systemd \
-         /tmp/oci-monitor-deploy/configs \
-         /tmp/oci-monitor-deploy/docs
+ssh opc@servidor 'mkdir -p /home/opc/deploys'
 
-cp dist/oci-infrastructure-monitor-linux-arm64 dist/SHA256SUMS \
-   /tmp/oci-monitor-deploy/dist/
-cp systemd/oci-infrastructure-monitor.service \
-   systemd/oci-infrastructure-monitor.timer \
-   /tmp/oci-monitor-deploy/systemd/
-cp configs/config.example.json /tmp/oci-monitor-deploy/configs/
-cp README.md docs/architecture.md docs/deployment.md docs/troubleshooting.md \
-   docs/decisions.md docs/oci-permissions.md docs/delivery.md \
-   /tmp/oci-monitor-deploy/docs/
+scp dist/oci-infrastructure-monitor-linux-arm64 \
+    configs/config.example.json \
+    systemd/oci-infrastructure-monitor.service \
+    systemd/oci-infrastructure-monitor.timer \
+    opc@servidor:/home/opc/deploys/
+
+scp dist/SHA256SUMS.deploy opc@servidor:/home/opc/deploys/SHA256SUMS
+
+# Opcional: documentación para el Documentation= del service
+scp README.md docs/*.md opc@servidor:/home/opc/deploys/
 ```
 
-Archivos que se suben:
+En `/home/opc/deploys` quedan los archivos planos:
 
-- **Obligatorios:** el binario, `SHA256SUMS`, la plantilla de configuración y las dos unidades systemd.
-- **Opcionales:** la documentación, para que la unidad pueda apuntar a `README.md` con `Documentation=`. No es necesaria para que el servicio funcione.
-
-### 1.5 Subir la entrega al servidor
-
-Si en el servidor ya existe `/tmp/oci-monitor-deploy`, bórralo antes para no anidar el directorio:
-
-```bash
-ssh usuario@servidor 'rm -rf /tmp/oci-monitor-deploy'
+```text
+oci-infrastructure-monitor-linux-arm64
+SHA256SUMS
+config.example.json
+oci-infrastructure-monitor.service
+oci-infrastructure-monitor.timer
+README.md y *.md   (opcional)
 ```
 
-Sube la entrega:
-
-```bash
-scp -r /tmp/oci-monitor-deploy usuario@servidor:/tmp/
-```
-
-En el servidor quedará `/tmp/oci-monitor-deploy/` con `dist/`, `systemd/`, `configs/` y `docs/`. No subas `state.json`, `history/`, `dist/` completo ni nada que no esté en esa lista.
+No subas `state.json`, `history/` ni el resto de `dist/`. El binario es autocontenido.
 
 ---
 
@@ -178,23 +167,23 @@ Por qué este usuario:
 
 No ejecutes `run` como root: los archivos quedarían `root:root` y el servicio no podría escribir el estado. Usa siempre `sudo -u oci-monitor` o el servicio de systemd.
 
-### 2.3 Verificar la entrega
+### 2.3 Verificar la carga
 
 ```bash
-cd /tmp/oci-monitor-deploy
-sha256sum -c dist/SHA256SUMS
-# esperado: dist/oci-infrastructure-monitor-linux-arm64: OK
+cd /home/opc/deploys
+sha256sum -c SHA256SUMS
+# esperado: oci-infrastructure-monitor-linux-arm64: OK
 ```
 
 Si la suma no coincide, no instales nada: vuelve a subir el binario.
 
-Los comandos siguientes usan rutas relativas a `/tmp/oci-monitor-deploy`. Si abres otra shell, vuelve a entrar en ese directorio antes de continuar.
+Los comandos siguientes usan `/home/opc/deploys` como origen. No se crean carpetas temporales: `install` copia directamente a los destinos. Si abres otra shell, vuelve a entrar en `/home/opc/deploys` o usa rutas absolutas.
 
 ### 2.4 Instalar el binario
 
 ```bash
 sudo install -m 0755 -o root -g root \
-  dist/oci-infrastructure-monitor-linux-arm64 \
+  oci-infrastructure-monitor-linux-arm64 \
   /usr/local/bin/oci-infrastructure-monitor
 sudo restorecon -v /usr/local/bin/oci-infrastructure-monitor
 /usr/local/bin/oci-infrastructure-monitor version
@@ -221,10 +210,12 @@ La unidad referencia `README.md` con `Documentation=`. Si quieres que esa ruta e
 
 ```bash
 sudo install -d -m 0755 /usr/local/share/doc/oci-infrastructure-monitor
-sudo install -m 0644 /tmp/oci-monitor-deploy/docs/*.md \
+sudo install -m 0644 /home/opc/deploys/*.md \
   /usr/local/share/doc/oci-infrastructure-monitor/
 sudo restorecon -Rv /usr/local/share/doc/oci-infrastructure-monitor
 ```
+
+Si no subiste la documentación, omite este paso.
 
 ### 2.6 Crear el `config.json`
 
@@ -232,7 +223,7 @@ Copia la plantilla y edítala:
 
 ```bash
 sudo install -m 0640 -o root -g oci-monitor \
-  configs/config.example.json \
+  config.example.json \
   /etc/oci-infrastructure-monitor/config.json
 sudo vi /etc/oci-infrastructure-monitor/config.json
 sudo chown root:oci-monitor /etc/oci-infrastructure-monitor/config.json
@@ -299,8 +290,8 @@ No hace falta el archivo para `run` si `telegram.enabled=false`; el `Environment
 ### 2.8 Instalar las unidades systemd
 
 ```bash
-sudo install -m 0644 systemd/oci-infrastructure-monitor.service /etc/systemd/system/
-sudo install -m 0644 systemd/oci-infrastructure-monitor.timer   /etc/systemd/system/
+sudo install -m 0644 oci-infrastructure-monitor.service /etc/systemd/system/
+sudo install -m 0644 oci-infrastructure-monitor.timer   /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemd-analyze verify \
   /etc/systemd/system/oci-infrastructure-monitor.service \
@@ -498,7 +489,9 @@ En desarrollo, compila y prepara la entrega como en la Parte 1:
 ```bash
 git status --porcelain    # debe estar vacío
 make dist-monitor
-# volver a crear /tmp/oci-monitor-deploy y subirlo
+(cd dist && sha256sum oci-infrastructure-monitor-linux-arm64) > dist/SHA256SUMS.deploy
+scp dist/oci-infrastructure-monitor-linux-arm64 opc@servidor:/home/opc/deploys/
+scp dist/SHA256SUMS.deploy opc@servidor:/home/opc/deploys/SHA256SUMS
 ```
 
 En el servidor:
@@ -511,9 +504,9 @@ sudo cp -a /usr/local/bin/oci-infrastructure-monitor /usr/local/bin/oci-infrastr
 sudo systemctl stop oci-infrastructure-monitor.timer
 
 # 3. Instala el binario nuevo de forma atómica
-cd /tmp/oci-monitor-deploy
-sha256sum -c dist/SHA256SUMS
-sudo install -m 0755 -o root -g root dist/oci-infrastructure-monitor-linux-arm64 \
+cd /home/opc/deploys
+sha256sum -c SHA256SUMS
+sudo install -m 0755 -o root -g root oci-infrastructure-monitor-linux-arm64 \
   /usr/local/bin/oci-infrastructure-monitor.new
 sudo mv /usr/local/bin/oci-infrastructure-monitor.new /usr/local/bin/oci-infrastructure-monitor
 sudo restorecon -v /usr/local/bin/oci-infrastructure-monitor
@@ -576,12 +569,12 @@ sudo groupdel oci-monitor
 - [ ] `make dist-monitor` sale `0` y genera el binario ARM64.
 - [ ] `go version -m` muestra `vcs.revision` = commit y `vcs.modified=false`.
 - [ ] `dist/SHA256SUMS` coincide con el binario.
-- [ ] `/tmp/oci-monitor-deploy` tiene `dist/`, `systemd/`, `configs/` y, si se quiere, `docs/`.
+- [ ] `/home/opc/deploys` contiene el binario, `SHA256SUMS`, `config.example.json`, las dos unidades y, si se quiere, la documentación.
 
 ### Servidor
 
 - [ ] `uname -m` es `aarch64`; `systemctl --version` funciona.
-- [ ] `sha256sum -c dist/SHA256SUMS` coincide.
+- [ ] `sha256sum -c SHA256SUMS` coincide en `/home/opc/deploys`.
 - [ ] `oci-monitor` existe, sin shell y sin privilegios.
 - [ ] `/var/lib/oci-infrastructure-monitor` es `0700 oci-monitor:oci-monitor`.
 - [ ] `/etc/oci-infrastructure-monitor` es `0750 root:oci-monitor`.
