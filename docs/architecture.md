@@ -60,7 +60,7 @@ VnicToNetworkBytes[1h]{resourceId = "ocid1.vnic..."}.sum()
 VnicFromNetworkBytes[1h]{resourceId = "ocid1.vnic..."}.sum()
 ```
 
-- Se usa intervalo y resolución de `1h`, con `startTime` y `endTime` alineados a horas UTC. El timestamp del punto agregado corresponde al **final** de la ventana; el `endTime` de la consulta es exclusivo.
+- Se usa intervalo y resolución de `1h`, con `startTime` y `endTime` alineados a horas UTC. El timestamp del punto agregado corresponde al **final** de la ventana; el `endTime` de la consulta es exclusivo. Por eso la consulta envía `endTime + 1h` (`Job.QueryEnd`) y el filtro de datos sigue siendo `[start, end)`: así el punto de la última hora del mes no se queda fuera.
 - La ejecución normal consulta la ventana de reconsulta (48 h por defecto) a 1 h: unas 48 muestras por VNIC y dirección.
 - La finalización de mes consulta el mes completo a 1 h: 744 muestras por VNIC y dirección.
 - La anomalía de 6 h se calcula con los buckets horarios persistidos, no con una consulta adicional.
@@ -164,7 +164,7 @@ Todos los archivos llevan `"schema_version": 3` desde el Hito 4. La lectura acep
 | `no_data` | Pasada la latencia, sin datapoint, y la VNIC ya fue visible. Cuenta 0. | 0 |
 | `incomplete` | Consulta fallida, hora anterior a la primera visibilidad de la VNIC u hora fuera de retención. | 0 |
 
-- La hora del bucket se calcula a partir del timestamp agregado: OCI lo marca al final de la ventana, así que un punto alineado a las 12:00 pertenece al bucket de las 11:00 (`BucketHour`). Un timestamp no alineado cae en la hora que lo contiene.
+- La hora del bucket se calcula a partir del timestamp agregado: OCI lo marca al final de la ventana, así que un punto alineado a las 12:00 pertenece al bucket de las 11:00 (`BucketHour`). Un timestamp no alineado cae en la hora que lo contiene. La consulta extiende `endTime` una hora más allá del último bucket para que el punto del límite no se pierda.
 - Una consulta con éxito que omite un punto ya confirmado no borra el dato: solo se reescriben las horas con punto recibido y las que son `provisional`, `incomplete` o faltan. Así una respuesta parcial o vacía no destruye el mes.
 - `no_data` no invalida el acumulado por sí solo. Una racha mayor que `no_data_streak_hours` solo lo invalida si OCI publica ceros explícitos; la política vive en `accumulate.Options.PublishZeros` y hoy vale `false` a la espera de la validación empírica.
 - La visibilidad se infiere de los datapoints, no de `ListMetrics`: una VNIC con datos previos que no devuelve ninguno en una ejecución con consultas exitosas pasa a `visible=false` con `warning_since`; una VNIC que nunca apareció deja sus horas `incomplete` y no genera warning.
@@ -182,11 +182,11 @@ Todos los archivos llevan `"schema_version": 3` desde el Hito 4. La lectura acep
 
 - Archivo temporal en el mismo directorio, `fsync`, `rename` atómico y `fsync` del directorio; `0600` para archivos y `0700` para directorios.
 - `flock` exclusivo y no bloqueante (`LOCK_EX|LOCK_NB`) sobre `<state_dir>/lock`, con la biblioteca estándar (`syscall.Flock`). `Collect` exige el lock tomado; lo toma el comando `run` del Hito 4. `status` lee sin lock. Si dos ejecuciones coinciden, la segunda no obtiene el lock (`ErrLocked`, código `6` en `run`).
-- Esquema desconocido: error sin escritura. Corrupción: cuarentena y error (salvo en `--dry-run`, que informa sin mover). Un historial corrupto solo afecta a ese mes: `status` sigue mostrando el resto y sale `4`; `Collect` aborta para no construir sobre datos ilegibles.
+- Esquema desconocido: error sin escritura. Corrupción: cuarentena y error (salvo en `--dry-run` y `status`, que informan sin mover). Un historial corrupto solo afecta a ese mes: `status` sigue mostrando el resto y sale `4`; `Collect` aborta para no construir sobre datos ilegibles.
 
 ### `status`
 
-`status` no consulta OCI y no escribe estado ni historial; si encuentra un archivo corrupto lo mueve a `*.corrupt-*` y sale `4`. Muestra, en español y en texto:
+`status` no consulta OCI y no escribe estado ni historial; si encuentra un archivo corrupto lo informa y sale `4`, pero no lo mueve. Muestra, en español y en texto:
 
 - directorio, esquema, última ejecución, última consulta exitosa, fallos consecutivos y notificaciones pendientes;
 - mes actual y mes anterior: abierto, finalizado, en gracia o pendiente de finalización; GiB y bytes del saliente; acumulado `completo`, `provisional`, `incompleto` o `sin datos`; conteo de `complete`/`provisional`/`no_data`/`incomplete`; entrante aparte si existe; correcciones acumuladas y su delta en bytes;
@@ -195,7 +195,7 @@ Todos los archivos llevan `"schema_version": 3` desde el Hito 4. La lectura acep
 
 La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal (lo hace el evaluador del Hito 3).
 
-`test-telegram` lee el estado y el historial con la cuarentena desactivada: informa de un archivo corrupto pero no lo mueve. `status` y `run` (salvo `--dry-run`) aplican la cuarentena documentada; `status` sale `4` si la encuentra.
+`test-telegram` y `status` leen el estado y el historial con la cuarentena desactivada: informan de un archivo corrupto pero no lo mueven. Solo `run` real (con el lock) aplica la cuarentena documentada; `status` sale `4` si la encuentra.
 
 ## Alertas (Hito 3)
 
@@ -315,15 +315,23 @@ El `service` no tiene sección `[Install]`: solo se habilita el `timer`. Así se
 
 ### Compilación y artefactos
 
+La vía recomendada es el `Makefile`, que compila el binario ARM64 con el commit embebido y exige un árbol limpio:
+
 ```bash
-VERSION=1.0.0
-COMMIT=$(git rev-parse --short HEAD)
+make dist-monitor              # release ARM64; falla si hay cambios sin commitear
+```
+
+El equivalente manual es:
+
+```bash
+VERSION=$(git describe --tags --always)
+COMMIT=$(git rev-parse --short=12 HEAD)
 DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=true \
   -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$DATE" \
   -o dist/oci-infrastructure-monitor-linux-arm64 ./cmd/monitor
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=true \
   -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$DATE" \
   -o dist/oci-infrastructure-monitor-linux-amd64 ./cmd/monitor
 
@@ -333,7 +341,8 @@ sha256sum -c dist/SHA256SUMS
 
 - `-trimpath` evita rutas de la máquina de compilación en el binario.
 - `-s -w` elimina información de depuración; el binario sigue siendo localizable con `version`.
-- `-X main.version/commit/buildDate` alimenta el comando `version`.
+- `-X main.version/commit/buildDate` alimenta el comando `version`; `-buildvcs=true` graba además `vcs.revision`, `vcs.time` y `vcs.modified`. `version` los imprime y `go version -m` los muestra en el host de build.
+- El servidor de despliegue no necesita Git ni Go: se consulta con `oci-infrastructure-monitor version`.
 - `dist/` está en `.gitignore`: los binarios son artefactos de entrega, no código versionado.
 
 ### Operación y códigos

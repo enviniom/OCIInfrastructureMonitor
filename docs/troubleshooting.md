@@ -38,6 +38,16 @@ run: consultas_oci=4 fallos_oci=0 enviadas=0 encoladas=0 pendientes=0 caducadas=
 
 `consultas_oci` cuenta las consultas ejecutadas, `fallos_oci` las que fallaron, `enviadas` los mensajes aceptados por Telegram, `encoladas` las nuevas pendientes, `pendientes` las que quedan en la cola, `caducadas` las retiradas por los 7 días y `descartadas` las retiradas por desbordamiento de las 50 entradas.
 
+### Saber qué commit está desplegado
+
+El servidor no necesita Git ni Go:
+
+```bash
+oci-infrastructure-monitor version
+```
+
+Si muestra `dev`/`unknown` en `version`/`commit`, el binario se compiló sin `-X`; recompílalo con `make dist-monitor` en el repositorio de desarrollo. Si `vcs.modified` es `true` o el commit lleva `-dirty`, el binario incluye cambios sin commitear y el hash es solo la base. Para ver qué cambios le faltan, en el repositorio de desarrollo: `git log --oneline <commit>..HEAD` y `git diff <commit>..HEAD`.
+
 ## 2. La unidad está en `failed`
 
 ```bash
@@ -83,6 +93,8 @@ Checklist:
 - No hay campos desconocidos ni tipos incorrectos; la lectura es estricta.
 - `oci.region` no está vacío y `oci.auth` es `instance_principal`.
 - Los OCIDs tienen la forma `ocid1.<tipo>.<región>.<algo>.<algo>`; la validación local es sintáctica.
+
+Un `telegram.env` ilegible aborta el ciclo antes de consultar OCI, porque el código de configuración (`2`) tiene prioridad sobre el de OCI (`3`). Corrige el archivo y relanza dentro de la ventana de reconsulta de 48 h para no perder horas.
 - `alert_percentages` tiene exactamente 4 enteros crecientes, el último `100`.
 - `monthly_limit_gib` y `high_traffic_6h_gib` son mayores que 0 si `network.enabled=true`.
 - `storage.state_dir` es una ruta absoluta.
@@ -157,7 +169,7 @@ Comprobaciones:
    head -c 500 /var/lib/oci-infrastructure-monitor/state.json.corrupt-*
    ```
 
-   `status` también mueve un corrupto y sale `4`, pero sigue mostrando lo legible.
+   `status` informa del corrupto y sale `4`, pero no lo mueve; solo `run` lo mueve. Sigue mostrando lo legible.
 
 4. **Historial finalizado.** `SaveHistory` rechaza sobrescribir un mes finalizado (`ErrFinalizedHistory`). Es una protección, no un fallo: un mes cerrado es inmutable. Si necesitas corregirlo, restaura una copia editada y hazlo con el timer detenido y bajo tu responsabilidad.
 

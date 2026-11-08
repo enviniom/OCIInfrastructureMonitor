@@ -161,7 +161,7 @@ oci-infrastructure-monitor run [--dry-run] [--config PATH] [--telegram-env PATH]
 oci-infrastructure-monitor check [--config PATH]
 oci-infrastructure-monitor status [--config PATH]
 oci-infrastructure-monitor test-telegram [--config PATH] [--telegram-env PATH]
-oci-infrastructure-monitor version
+oci-infrastructure-monitor version | --version
 oci-infrastructure-monitor --help
 ```
 
@@ -170,9 +170,9 @@ oci-infrastructure-monitor --help
 | `run` | Ciclo completo de 13 pasos: lock, recopilación, historial, cola, alertas, envío | Sí, tras cada envío y al final |
 | `run --dry-run` | Lee y calcula; informa de lo que se habría enviado | No escribe `state.json` ni historiales; puede crear el directorio de estado, `history/` y `lock` |
 | `check` | Valida configuración, autenticación y visibilidad de las VNIC; no consulta estado | No |
-| `status` | Muestra el estado persistido en texto, sin consultar OCI | No; solo mueve un archivo corrupto a `*.corrupt-*` |
+| `status` | Muestra el estado persistido en texto, sin consultar OCI | No; informa de un archivo corrupto sin moverlo |
 | `test-telegram` | Envía un mensaje de prueba explícito | No; lee el estado sin cuarentena |
-| `version` | Versión, commit, fecha de compilación, Go y arquitectura | No |
+| `version` | Versión, commit, fecha, Go y arquitectura; úsalo en el servidor para saber qué código está desplegado | No |
 
 ### Códigos de salida
 
@@ -214,6 +214,36 @@ journalctl -u oci-infrastructure-monitor.service -p warning --since today
 
 Los buckets y los timestamps son UTC; el timer usa la hora local del servidor. Un mes finalizado no se modifica: si el proceso cae entre el cierre del historial y el guardado del estado, la ejecución siguiente adopta el cierre desde el historial.
 
+### Saber qué commit está desplegado
+
+El servidor no necesita Git ni Go: el binario lleva el commit embebido.
+
+```bash
+oci-infrastructure-monitor version
+```
+
+Salida típica:
+
+```text
+oci-infrastructure-monitor roadmap-final
+commit: 6a077c084793
+built: 2026-11-07T23:59:59Z
+vcs.revision: 6a077c084793824b18f69392da36bf931969a80b
+vcs.time: 2026-11-07T22:27:10Z
+vcs.modified: false
+go: go1.27.3
+os/arch: linux/arm64
+```
+
+`version` es el `git describe` del build y `commit` el hash corto. El `Makefile` exige un árbol limpio, así que un release no debería mostrar `-dirty` ni `vcs.modified=true`. Si aparece `dev`/`unknown`, el binario se compiló sin `-X`: recompílalo con `make dist-monitor`.
+
+Para ver qué cambios le faltan al binario, en el repositorio de desarrollo:
+
+```bash
+git log --oneline 6a077c084793..HEAD
+git diff 6a077c084793..HEAD
+```
+
 ## Estructura del proyecto
 
 ```text
@@ -242,6 +272,7 @@ Los buckets y los timestamps son UTC; el timer usa la hora local del servidor. U
 │   ├── persistence/          state.json, historial, esquema, escritura atómica y flock
 │   └── telegram/             Credenciales y transporte HTTP
 ├── systemd/                  Unidades service y timer
+├── Makefile                  Build ARM64 con commit embebido y verificación
 ├── Roadmap.md                Roadmap original (se conserva; ver tag roadmap-final)
 ├── go.mod / go.sum
 └── README.md
@@ -264,18 +295,26 @@ export GOCACHE="$PWD/.tmp/gocache"
 go test -race ./...
 ```
 
-Compilación cruzada sin CGO, con versión, commit y fecha:
+Compilación de release (ARM64, con commit embebido):
 
 ```bash
-VERSION=1.0.0
-COMMIT=$(git rev-parse --short HEAD)
+make dist-monitor              # release ARM64; exige árbol limpio
+```
+
+`make dist-monitor` compila `dist/oci-infrastructure-monitor-linux-arm64`, comprueba la arquitectura con `file`, imprime el `vcs.revision` del binario y genera `dist/SHA256SUMS`. Si hay cambios sin commitear, **falla**: un release no debe llevar un hash que no identifique el código. El Makefile inyecta `main.version`, `main.commit` y `main.buildDate` con `-X` y usa `-buildvcs=true`.
+
+El equivalente manual es:
+
+```bash
+VERSION=$(git describe --tags --always)
+COMMIT=$(git rev-parse --short=12 HEAD)
 DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -buildvcs=true \
   -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$DATE" \
   -o dist/oci-infrastructure-monitor-linux-arm64 ./cmd/monitor
 
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=true \
   -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$DATE" \
   -o dist/oci-infrastructure-monitor-linux-amd64 ./cmd/monitor
 
@@ -283,6 +322,8 @@ file dist/oci-infrastructure-monitor-linux-*
 sha256sum dist/oci-infrastructure-monitor-linux-* > dist/SHA256SUMS
 sha256sum -c dist/SHA256SUMS
 ```
+
+`go version -m` muestra el `vcs.revision` y `vcs.modified` del binario; `version` muestra el commit (en el servidor, que no tiene Go, es la vía). El Makefile es la vía recomendada porque verifica el commit y exige un árbol limpio.
 
 `dist/` está en `.gitignore`: los binarios son artefactos de entrega, no código versionado.
 
@@ -308,6 +349,7 @@ sha256sum -c dist/SHA256SUMS
 - `ListMetrics` no prueba existencia: `check` avisa, no afirma que una VNIC no exista.
 - La v1 asume un único compartimento de subred (`network.compartment_ocid`) para todas las VNIC.
 - El tráfico registrado no es el facturable.
+- Si el proceso está caído más de un mes, `MonthlyThresholds` no alerta los umbrales del mes intermedio: solo evalúa el mes en curso. El total se reconstruye desde el historial al volver.
 - Sin validar en producción: `check` contra OCI, Dynamic Group, envío real a Telegram, `429` real, timer real, SELinux y permisos del usuario del servicio.
 
 Lista viva y evidencia: [`docs/progress.md`](docs/progress.md).

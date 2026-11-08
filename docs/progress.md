@@ -473,3 +473,17 @@ Estas comprobaciones no pueden hacerse desde el entorno de desarrollo y las vali
 - [ ] Compatibilidad del endurecimiento systemd (`@system-service`, `MemoryDenyWriteExecute`, `ProtectSystem=strict`) con el binario.
 - [ ] Ajuste de `publication_latency_hours`, umbrales y enfriamientos con tráfico real.
 - [ ] Confirmación empírica de la publicación de ceros y activación de `PublishZeros` si corresponde.
+
+## Cierre de la auditoría (2026-11-07)
+
+Se aplicaron las correcciones del informe de auditoría:
+
+- **M3:** la consulta de finalización usa `End + 1h` (`Job.QueryEnd`) porque OCI excluye `endTime` y marca el punto al final de la ventana; test de finalización que comprueba el bucket de las 23:00. Queda pendiente la consulta real que confirme la convención.
+- **M1:** `status` ya no mueve archivos corruptos; solo `run`, con el lock, aplica la cuarentena.
+- **M2/B10/I7:** la CLI rechaza argumentos posicionales extra, `--version` es alias de `version`, `run --help` sale 0 y el comentario de los pasos 7/8 coincide con el código.
+- **B1/B2/B3/B5/B6/B7/B8:** fsync del directorio, 200 truncado reintentable, `Retry-After` de cabecera, reintentos cortos en OCI, cota de `int64` en `normalize`, `test-telegram` informa de la corrupción y `drainPending` conserva el error de Telegram.
+- **I1/I3/I4/I5:** `null`/`{}` son corruptos, `State.Validate` exige período y unicidad `(kind, period)`, `outbox.Enqueue` expira la cola, `pendientes=n/d` si no se leyó el estado y el texto de una anomalía se persiste para el reintento.
+- **Build:** `Makefile` estricto para ARM64 y `version` con `vcs.revision`/`vcs.modified`; el servidor solo necesita el binario.
+- **Tests:** nuevos tests de `internal/oci`, CLI, almacenamiento y reintentos.
+
+Pendiente: la consulta real a OCI para confirmar la convención de timestamps y commitear el árbol antes de `make dist-monitor`.
