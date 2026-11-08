@@ -117,3 +117,23 @@ func TestNormalizeSeriesDuplicateHourKeepsLast(t *testing.T) {
 		t.Fatalf("samples = %+v, want one sample with 20 bytes", samples)
 	}
 }
+
+func TestNormalizeSeriesDropsUnrepresentableValues(t *testing.T) {
+	start := utcHour(2026, 11, 7, 10)
+	end := utcHour(2026, 11, 7, 12)
+	series := []oci.Series{{
+		ResourceID: "vnic-a",
+		Points: []oci.Point{
+			{Time: utcHour(2026, 11, 7, 11), Value: 1e30}, // hour 10, dropped
+			{Time: utcHour(2026, 11, 7, 12), Value: 100},  // hour 11, valid
+		},
+	}}
+
+	samples := NormalizeSeries(series, persistence.DirectionOutbound, start, end)
+	if len(samples) != 1 {
+		t.Fatalf("samples = %d, want 1: %+v", len(samples), samples)
+	}
+	if !samples[0].Hour.Equal(utcHour(2026, 11, 7, 11)) || samples[0].Bytes != 100 {
+		t.Errorf("sample = %+v, want hour 11 with 100 bytes", samples[0])
+	}
+}

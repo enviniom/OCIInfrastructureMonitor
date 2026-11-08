@@ -30,7 +30,11 @@ func (s *stubOCIClient) Summarize(_ context.Context, query oci.Query) ([]oci.Ser
 	vnic := queryVNIC(query.MQL)
 	var points []oci.Point
 	for hour := query.StartTime.UTC().Truncate(time.Hour); hour.Before(query.EndTime); hour = hour.Add(time.Hour) {
-		points = append(points, oci.Point{Time: hour.Add(time.Hour), Value: s.value})
+		at := hour.Add(time.Hour)
+		if !at.Before(query.EndTime) {
+			continue
+		}
+		points = append(points, oci.Point{Time: at, Value: s.value})
 	}
 	return []oci.Series{{ResourceID: vnic, Points: points}}, nil
 }
@@ -173,7 +177,7 @@ func TestRunCommandNetworkDisabledExitsZero(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errOut)
 	}
-	if !strings.Contains(out, "consultas_oci=0") {
+	if !strings.Contains(out, "consultas_oci=0") || !strings.Contains(out, "pendientes=n/d") {
 		t.Errorf("output = %q", out)
 	}
 }
@@ -368,6 +372,9 @@ func TestTestTelegramCommandDoesNotQuarantineCorruptState(t *testing.T) {
 	})
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr = %s", code, errOut)
+	}
+	if !strings.Contains(errOut, "aviso de estado") {
+		t.Errorf("stderr = %q, want a state warning", errOut)
 	}
 	if sender.count() != 1 {
 		t.Fatalf("sent = %d, want 1", sender.count())

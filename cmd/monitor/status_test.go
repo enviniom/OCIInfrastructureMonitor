@@ -223,6 +223,16 @@ func TestStatusCommandExitCodes(t *testing.T) {
 	if !strings.Contains(errOut, "error de persistencia") {
 		t.Errorf("stderr = %q", errOut)
 	}
+	if _, err := os.Stat(filepath.Join(stateDir, "state.json")); err != nil {
+		t.Errorf("status moved the corrupt state: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(stateDir, "state.json.corrupt-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("quarantine files = %v, want none", matches)
+	}
 }
 
 func TestStatusCommandMissingConfig(t *testing.T) {

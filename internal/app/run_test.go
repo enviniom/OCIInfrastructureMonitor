@@ -498,7 +498,7 @@ func TestRunQueueFullDropsOldestAndExits5(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		notifications = append(notifications, persistence.Notification{
 			Kind:      persistence.NotificationAnomaly6H,
-			Period:    fmt.Sprintf("2026-%02d", (i%12)+1),
+			Period:    fmt.Sprintf("%d-%02d", 2020+i/12, (i%12)+1),
 			CreatedAt: now.Add(time.Duration(i) * time.Minute),
 			Text:      fmt.Sprintf("pendiente %d", i),
 		})
@@ -997,5 +997,70 @@ func TestRunDryRunReportsPendingWithoutTouchingThem(t *testing.T) {
 	}
 	if state.Pending[0].Attempts != 0 || state.Pending[0].LastAttempt != nil {
 		t.Errorf("dry run recorded an attempt: %+v", state.Pending[0])
+	}
+}
+
+func TestDrainPendingKeepsTelegramErrorWhenSaveFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write to a read-only directory")
+	}
+	cfg := runConfig(t)
+	dir := t.TempDir()
+	store := persistence.New(dir)
+	now := utcHour(2026, 11, 7, 13)
+	state := persistence.NewState()
+	state.Pending = []persistence.Notification{{
+		Kind:      persistence.NotificationMonthlyThreshold,
+		Period:    "2026-11",
+		Level:     50,
+		CreatedAt: now,
+	}}
+	sender := &fakeSender{sendErr: errors.New("telegram down")}
+
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(dir, 0o700)
+
+	_, drain, err := drainPending(context.Background(), cfg, store, sender, state, map[string]*persistence.History{}, now, &recordingLogger{})
+	if err == nil {
+		t.Fatal("drainPending() save error = nil")
+	}
+	if !drain.Failed || drain.Err == nil {
+		t.Errorf("drain = %+v, want Failed and the Telegram error", drain)
+	}
+}
+
+func TestRunPersistsAnomalyTextBeforeRetry(t *testing.T) {
+	cfg := runConfig(t)
+	cfg.Network.HighTraffic6HGiB = 0.001
+	store := persistence.New(cfg.Storage.StateDir)
+	now := utcHour(2026, 11, 7, 13)
+	client := &fakeMonitoring{handler: fullSeriesHandler(10 * 1024 * 1024)}
+
+	failing := &fakeSender{sendErr: errors.New("telegram down")}
+	report := Run(context.Background(), cfg, client, store, failing, RunOptions{Now: now})
+	if report.TelegramError == nil {
+		t.Fatal("TelegramError = nil, want the failed anomaly")
+	}
+	state, err := store.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Pending) != 1 {
+		t.Fatalf("pending = %+v, want one anomaly", state.Pending)
+	}
+	if !strings.Contains(state.Pending[0].Text, "consumo anormal") || !strings.Contains(state.Pending[0].Text, "ventana:") {
+		t.Fatalf("stored text = %q, want the anomaly window", state.Pending[0].Text)
+	}
+
+	recovered := &fakeSender{}
+	report = Run(context.Background(), cfg, client, store, recovered, RunOptions{Now: now.Add(time.Hour)})
+	if report.ExitCode != ExitOK {
+		t.Fatalf("retry exit = %d, errors: %v", report.ExitCode, report.TelegramError)
+	}
+	texts := recovered.all()
+	if len(texts) != 1 || !strings.Contains(texts[0], "consumo anormal") || !strings.Contains(texts[0], "ventana:") {
+		t.Fatalf("retried text = %v, want the original anomaly", texts)
 	}
 }

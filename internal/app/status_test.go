@@ -193,8 +193,15 @@ func TestBuildStatusCorruptStateStillShowsHistory(t *testing.T) {
 	if !report.Months[0].HasHistory {
 		t.Error("current history was not read")
 	}
-	if store.HasState() {
-		t.Error("state.json still exists; BuildStatus should quarantine by default")
+	if !store.HasState() {
+		t.Error("state.json was moved; BuildStatus must be read-only")
+	}
+	matches, err := filepath.Glob(filepath.Join(cfg.Storage.StateDir, "state.json.corrupt-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("quarantine files = %v, want none", matches)
 	}
 }
 

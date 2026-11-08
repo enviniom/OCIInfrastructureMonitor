@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"runtime"
+	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/enviniom/OCIInfrastructureMonitor/internal/app"
@@ -53,10 +56,20 @@ func execute(args []string) int {
 		return executeStatus(args[1:])
 	case "test-telegram":
 		return executeTestTelegram(args[1:])
-	case "version":
+	case "version", "--version", "-version":
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "%s: argumentos no admitidos: %v\n", args[0], args[1:])
+			usage(os.Stderr)
+			return 2
+		}
 		printVersion()
 		return 0
 	case "help", "--help", "-h":
+		if len(args) > 1 {
+			fmt.Fprintf(os.Stderr, "help: argumentos no admitidos: %v\n", args[1:])
+			usage(os.Stderr)
+			return 2
+		}
 		usage(os.Stdout)
 		return 0
 	default:
@@ -66,14 +79,32 @@ func execute(args []string) int {
 	}
 }
 
+// parseFlags parses the subcommand flags and rejects positional arguments.
+// ErrHelp is not an error: flag already printed the help and the command exits
+// with 0. Any other parse error, or a leftover positional argument, exits 2.
+func parseFlags(fs *flag.FlagSet, args []string) (int, bool) {
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0, false
+		}
+		return 2, false
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "%s: argumentos no admitidos: %v\n", fs.Name(), fs.Args())
+		fs.Usage()
+		return 2, false
+	}
+	return 0, true
+}
+
 func executeRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", config.DefaultPath, "ruta del archivo de configuración")
 	dryRun := fs.Bool("dry-run", false, "simula la ejecución sin escribir estado, encolar ni enviar")
 	telegramEnv := fs.String("telegram-env", telegram.DefaultEnvPath, "ruta del archivo con TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, ok := parseFlags(fs, args); !ok {
+		return code
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -127,8 +158,8 @@ func executeTestTelegram(args []string) int {
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", config.DefaultPath, "ruta del archivo de configuración")
 	telegramEnv := fs.String("telegram-env", telegram.DefaultEnvPath, "ruta del archivo con TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, ok := parseFlags(fs, args); !ok {
+		return code
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -150,9 +181,12 @@ func executeTestTelegram(args []string) int {
 	now := time.Now().UTC()
 	store := persistence.New(cfg.Storage.StateDir)
 	// A diagnostic must not move a corrupt state file aside: read without
-	// quarantine. "status" keeps the documented quarantine behavior.
-	summary := app.BuildStatusWithOptions(store, cfg, now, persistence.LoadOptions{Quarantine: false}).Months[0].Summary
-	text := app.RenderTestMessage(cfg, summary, now)
+	// quarantine. Report the persistence problem but still test Telegram.
+	report := app.BuildStatusWithOptions(store, cfg, now, persistence.LoadOptions{Quarantine: false})
+	for _, err := range report.Errors {
+		fmt.Fprintf(os.Stderr, "test-telegram: aviso de estado: %v\n", err)
+	}
+	text := app.RenderTestMessage(cfg, report.Months[0].Summary, now)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -168,8 +202,8 @@ func executeStatus(args []string) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", config.DefaultPath, "ruta del archivo de configuración")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, ok := parseFlags(fs, args); !ok {
+		return code
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -193,8 +227,8 @@ func executeCheck(args []string) int {
 	fs := flag.NewFlagSet("check", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	configPath := fs.String("config", config.DefaultPath, "ruta del archivo de configuración")
-	if err := fs.Parse(args); err != nil {
-		return 2
+	if code, ok := parseFlags(fs, args); !ok {
+		return code
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -254,9 +288,13 @@ func writeRunReport(w, errW io.Writer, report app.RunReport) {
 	if report.DryRun {
 		label = "run (simulación)"
 	}
-	fmt.Fprintf(w, "%s: consultas_oci=%d fallos_oci=%d enviadas=%d encoladas=%d pendientes=%d caducadas=%d descartadas=%d código=%d\n",
+	pending := "n/d"
+	if report.PendingKnown {
+		pending = fmt.Sprint(report.Pending)
+	}
+	fmt.Fprintf(w, "%s: consultas_oci=%d fallos_oci=%d enviadas=%d encoladas=%d pendientes=%s caducadas=%d descartadas=%d código=%d\n",
 		label, report.Collect.Queries, len(report.Collect.Failures), len(report.Sent),
-		report.Enqueued, report.Pending, report.Expired, report.Dropped, report.ExitCode)
+		report.Enqueued, pending, report.Expired, report.Dropped, report.ExitCode)
 	if report.DryRun {
 		fmt.Fprintf(w, "run (simulación): no se escribió estado, no se encoló nada, no se envió nada; alertas simuladas=%d\n", report.WouldSend)
 	}
@@ -277,12 +315,57 @@ func writeRunReport(w, errW io.Writer, report app.RunReport) {
 	}
 }
 
+// buildVCS reads the VCS metadata the Go toolchain embeds when the binary is
+// built from a git checkout (the default). It is empty when the build used
+// -buildvcs=false or the source tree was not a repository.
+func buildVCS() (revision, commitTime string, modified bool) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", "", false
+	}
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.time":
+			commitTime = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	return revision, commitTime, modified
+}
+
 func printVersion() {
+	revision, commitTime, modified := buildVCS()
+	commitValue := commit
+	if revision != "" {
+		if commitValue == "unknown" {
+			commitValue = shortRevision(revision)
+		}
+		if modified && !strings.HasSuffix(commitValue, "-dirty") {
+			commitValue += "-dirty"
+		}
+	}
 	fmt.Printf("oci-infrastructure-monitor %s\n", version)
-	fmt.Printf("commit: %s\n", commit)
+	fmt.Printf("commit: %s\n", commitValue)
 	fmt.Printf("built: %s\n", buildDate)
+	if revision != "" {
+		fmt.Printf("vcs.revision: %s\n", revision)
+		if commitTime != "" {
+			fmt.Printf("vcs.time: %s\n", commitTime)
+		}
+		fmt.Printf("vcs.modified: %t\n", modified)
+	}
 	fmt.Printf("go: %s\n", runtime.Version())
 	fmt.Printf("os/arch: %s/%s\n", runtime.GOOS, runtime.GOARCH)
+}
+
+func shortRevision(revision string) string {
+	if len(revision) > 12 {
+		return revision[:12]
+	}
+	return revision
 }
 
 func usage(w io.Writer) {
@@ -291,7 +374,7 @@ func usage(w io.Writer) {
   oci-infrastructure-monitor check [--config PATH]
   oci-infrastructure-monitor status [--config PATH]
   oci-infrastructure-monitor test-telegram [--config PATH] [--telegram-env PATH]
-  oci-infrastructure-monitor version
+  oci-infrastructure-monitor version | --version
   oci-infrastructure-monitor --help
 
 run: consulta OCI, actualiza el estado y envía las alertas y los pendientes por Telegram.
@@ -299,7 +382,7 @@ run: consulta OCI, actualiza el estado y envía las alertas y los pendientes por
 check: valida configuración, autenticación y visibilidad de las VNIC en OCI Monitoring.
        No modifica estado ni configuración.
 status: muestra el estado persistido sin consultar OCI ni escribir estado ni historial.
-        Si encuentra un archivo corrupto lo mueve a *.corrupt-* y sale 4.
+        Si encuentra un archivo corrupto lo informa y sale 4; no lo mueve.
 test-telegram: envía un mensaje de prueba explícito. Funciona aunque telegram.enabled sea false.
 
 El token y el Chat ID se leen de telegram.env (TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID) o del

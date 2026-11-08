@@ -1,6 +1,7 @@
 package app
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -226,5 +227,17 @@ func TestFormatPercentageTruncates(t *testing.T) {
 	}
 	if got := formatPercentage(100, 100); got != "100,0" {
 		t.Errorf("formatPercentage(100,100) = %q, want 100,0", got)
+	}
+}
+
+func TestBytesFromGiBSaturates(t *testing.T) {
+	if got := bytesFromGiB(1e30); got != math.MaxInt64 {
+		t.Errorf("bytesFromGiB(1e30) = %d, want MaxInt64", got)
+	}
+	if got := bytesFromGiB(-1); got != 0 {
+		t.Errorf("bytesFromGiB(-1) = %d, want 0", got)
+	}
+	if got := bytesFromGiB(1); got != 1<<30 {
+		t.Errorf("bytesFromGiB(1) = %d, want %d", got, 1<<30)
 	}
 }

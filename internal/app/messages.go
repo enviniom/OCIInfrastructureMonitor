@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"strconv"
 	"strings"
@@ -268,10 +269,13 @@ func crossedUpTo(percentages []int, level int) []int {
 }
 
 func bytesFromGiB(value float64) int64 {
-	if value <= 0 {
+	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0
 	}
-	return int64(value * (1 << 30))
+	if value > float64(math.MaxInt64)/float64(1<<30) {
+		return math.MaxInt64
+	}
+	return int64(math.Round(value * float64(1<<30)))
 }
 
 func formatGiB(bytes int64) string {

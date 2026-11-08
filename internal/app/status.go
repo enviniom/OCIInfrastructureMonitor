@@ -48,11 +48,11 @@ type StatusReport struct {
 
 // BuildStatus reads state.json and the history of the current and previous
 // months without taking the lock and without querying OCI. A corrupt file only
-// affects its own file: the rest of the status is still reported. Corrupt files
-// are quarantined by default; use BuildStatusWithOptions to read without moving
-// them.
+// affects its own file: the rest of the status is still reported. It is a
+// read-only diagnostic: it never moves a corrupt file. Only run, which holds
+// the lock, applies the quarantine.
 func BuildStatus(store *persistence.Store, cfg config.Config, now time.Time) StatusReport {
-	return BuildStatusWithOptions(store, cfg, now, persistence.LoadOptions{Quarantine: true})
+	return BuildStatusWithOptions(store, cfg, now, persistence.LoadOptions{Quarantine: false})
 }
 
 // BuildStatusWithOptions is BuildStatus with explicit load options. The

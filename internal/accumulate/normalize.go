@@ -62,6 +62,12 @@ func NormalizeSeries(series []oci.Series, direction persistence.Direction, start
 				continue
 			}
 			value := math.Round(point.Value)
+			// Values at or above 2^63 do not fit int64. The conversion is
+			// architecture-dependent (MinInt64 on amd64, MaxInt64 on arm64),
+			// so drop the point instead of poisoning the month.
+			if value >= float64(1<<63) {
+				continue
+			}
 			if value < 0 {
 				value = 0
 			}

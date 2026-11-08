@@ -95,6 +95,7 @@ type RunReport struct {
 	Skipped          int
 	WouldSend        int
 	Pending          int
+	PendingKnown     bool
 	ConfigError      error
 	PersistenceError error
 	OCIError         error
@@ -129,8 +130,8 @@ func (r RunReport) ExitCodeFor() int {
 //  4. read the state and the histories through collectInternal;
 //  5. plan the requery window;
 //  6. query OCI without aborting on a single VNIC failure;
-//  7. persist the histories;
-//  8. sum the month;
+//  7. persist the histories (collectInternal has already summed the month in memory);
+//  8. keep the in-memory summaries for the alerts and the final state;
 //  9. drain the pending queue before evaluating new alerts;
 //  10. evaluate monthly thresholds, the six-hour anomaly and the collection
 //     health;
@@ -231,6 +232,7 @@ func Run(ctx context.Context, cfg config.Config, client oci.Client, store *persi
 		logger.Errorf("recopilación: %v", err)
 		return finish(report, logger)
 	}
+	report.PendingKnown = true
 	if len(collected.report.Failures) > 0 {
 		report.OCIError = summarizeQueryFailures(collected.report.Failures)
 		for _, failure := range collected.report.Failures {
@@ -332,6 +334,10 @@ func Run(ctx context.Context, cfg config.Config, client oci.Client, store *persi
 		state, drain, err = drainPending(workCtx, cfg, store, sender, state, histories, now, logger)
 		if err != nil {
 			report.PersistenceError = err
+			if drain.Err != nil {
+				report.TelegramError = drain.Err
+				logger.Errorf("telegram: no se pudo enviar un pendiente; se conserva en la cola: %v", drain.Err)
+			}
 			logger.Errorf("no se pudo persistir el estado tras un envío: %v", err)
 			return finish(report, logger)
 		}
@@ -388,7 +394,13 @@ func Run(ctx context.Context, cfg config.Config, client oci.Client, store *persi
 
 		// Step 11: enqueue before sending so a crash between the two leaves a
 		// retryable pending notification.
-		updated, enqueueResult := outbox.Enqueue(state.Pending, candidate.Notification, now)
+		notification := candidate.Notification
+		if notification.Text == "" {
+			// Persist the rendered text so a retry after a failed delivery or a
+			// crash keeps the original window and figures.
+			notification.Text = candidate.Text
+		}
+		updated, enqueueResult := outbox.Enqueue(state.Pending, notification, now)
 		state.Pending = updated
 		if enqueueResult.Added {
 			report.Enqueued++
@@ -492,11 +504,11 @@ func drainPending(ctx context.Context, cfg config.Config, store *persistence.Sto
 		cancel()
 		if err != nil {
 			state.Pending = bumpAttempt(state.Pending, notification, now)
+			result.Failed = true
+			result.Err = err
 			if saveErr := store.SaveState(state); saveErr != nil {
 				return state, result, saveErr
 			}
-			result.Failed = true
-			result.Err = err
 			return state, result, nil
 		}
 
@@ -708,13 +720,17 @@ func deliveryContext(ctx context.Context) (context.Context, context.CancelFunc) 
 
 func finish(report RunReport, logger Logger) RunReport {
 	report.ExitCode = report.ExitCodeFor()
+	pending := "n/d"
+	if report.PendingKnown {
+		pending = fmt.Sprint(report.Pending)
+	}
 	if report.DryRun {
-		logger.Infof("resumen (simulación): consultas=%d fallos=%d pendientes=%d envíos_simulados=%d descartadas=%d código=%d",
-			report.Collect.Queries, len(report.Collect.Failures), report.Pending, report.WouldSend, report.Expired+report.Dropped, report.ExitCode)
+		logger.Infof("resumen (simulación): consultas=%d fallos=%d pendientes=%s envíos_simulados=%d descartadas=%d código=%d",
+			report.Collect.Queries, len(report.Collect.Failures), pending, report.WouldSend, report.Expired+report.Dropped, report.ExitCode)
 		return report
 	}
-	logger.Infof("resumen: consultas=%d fallos_oci=%d enviadas=%d encoladas=%d pendientes=%d caducadas=%d descartadas=%d código=%d",
+	logger.Infof("resumen: consultas=%d fallos_oci=%d enviadas=%d encoladas=%d pendientes=%s caducadas=%d descartadas=%d código=%d",
 		report.Collect.Queries, len(report.Collect.Failures), len(report.Sent), report.Enqueued,
-		report.Pending, report.Expired, report.Dropped, report.ExitCode)
+		pending, report.Expired, report.Dropped, report.ExitCode)
 	return report
 }
