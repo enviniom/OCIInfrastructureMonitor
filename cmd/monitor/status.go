@@ -7,9 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/enviniom/OCIInfrastructureMonitor/internal/accumulate"
 	"github.com/enviniom/OCIInfrastructureMonitor/internal/app"
-	"github.com/enviniom/OCIInfrastructureMonitor/internal/persistence"
 )
 
 const gib = 1 << 30
@@ -57,7 +55,7 @@ func writeStateHeader(w io.Writer, report app.StatusReport) {
 }
 
 func writeMonthStatus(w io.Writer, month app.MonthStatus) {
-	fmt.Fprintf(w, "mes %s: %s (%s)\n", month.Label, month.Month, monthState(month))
+	fmt.Fprintf(w, "mes %s: %s (%s)\n", month.Label, month.Month, app.MonthStateLabel(month))
 	if month.Err != nil {
 		fmt.Fprintf(w, "  error: %v\n", month.Err)
 		return
@@ -69,7 +67,7 @@ func writeMonthStatus(w io.Writer, month app.MonthStatus) {
 
 	outbound := month.Summary.Outbound
 	fmt.Fprintf(w, "  saliente: %s\n", formatBytes(outbound.Bytes))
-	fmt.Fprintf(w, "  acumulado: %s\n", formatAccumulated(month.Summary))
+	fmt.Fprintf(w, "  acumulado: %s\n", app.AccumulatedLabel(month.Summary))
 	fmt.Fprintf(w, "  buckets: %d (complete %d, provisional %d, no_data %d, incomplete %d)\n",
 		outbound.Buckets, outbound.Complete, outbound.Provisional, outbound.NoData, outbound.Incomplete)
 
@@ -80,51 +78,6 @@ func writeMonthStatus(w io.Writer, month app.MonthStatus) {
 	if corrections := month.Corrections; corrections.BucketsCorrected > 0 || corrections.DeltaBytes != 0 {
 		fmt.Fprintf(w, "  correcciones durante la gracia: %d buckets, %s bytes\n",
 			corrections.BucketsCorrected, formatSigned(corrections.DeltaBytes))
-	}
-}
-
-func monthState(month app.MonthStatus) string {
-	switch {
-	case month.Err != nil:
-		return "error de lectura"
-	case !month.HasHistory:
-		return "sin datos"
-	case month.Finalized && month.FinalizedAt != nil:
-		return "finalizado el " + formatTime(*month.FinalizedAt)
-	case month.Finalized:
-		return "finalizado"
-	case month.Grace:
-		return "no finalizado (en gracia)"
-	case month.PendingFinalization:
-		return "no finalizado, pendiente de finalización"
-	default:
-		return "abierto"
-	}
-}
-
-func formatAccumulated(summary accumulate.Summary) string {
-	if !summary.HasData {
-		return "sin datos"
-	}
-	direction := summary.Outbound
-	if direction.Buckets == 0 {
-		direction = summary.Inbound
-	}
-	switch direction.Status {
-	case persistence.StatusComplete:
-		return "completo"
-	case persistence.StatusProvisional:
-		if direction.Reason != "" {
-			return "provisional (" + direction.Reason + ")"
-		}
-		return "provisional"
-	case persistence.StatusIncomplete:
-		if direction.Reason != "" {
-			return "incompleto (" + direction.Reason + ")"
-		}
-		return "incompleto"
-	default:
-		return string(direction.Status)
 	}
 }
 

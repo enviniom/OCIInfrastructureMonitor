@@ -139,6 +139,60 @@ func RenderTestMessage(cfg config.Config, summary accumulate.Summary, now time.T
 	return b.String()
 }
 
+// MonthStateLabel describes the lifecycle state of a month in Spanish. status
+// and the daily digest share it so both read the same.
+func MonthStateLabel(month MonthStatus) string {
+	switch {
+	case month.Err != nil:
+		return "error de lectura"
+	case !month.HasHistory:
+		return "sin datos"
+	case month.Finalized && month.FinalizedAt != nil:
+		return "finalizado el " + formatTimestamp(*month.FinalizedAt)
+	case month.Finalized:
+		return "finalizado"
+	case month.Grace:
+		return "no finalizado (en gracia)"
+	case month.PendingFinalization:
+		return "no finalizado, pendiente de finalización"
+	default:
+		return "abierto"
+	}
+}
+
+// AccumulatedLabel describes the accumulator of a month. The outbound
+// accumulator is the one the roadmap tracks; inbound is only used when the
+// month has no outbound bucket at all, as status has always done.
+func AccumulatedLabel(summary accumulate.Summary) string {
+	if !summary.HasData {
+		return "sin datos"
+	}
+	direction := summary.Outbound
+	if direction.Buckets == 0 {
+		direction = summary.Inbound
+	}
+	return accumulatedLabel(direction)
+}
+
+func accumulatedLabel(direction accumulate.DirectionSummary) string {
+	switch direction.Status {
+	case persistence.StatusComplete:
+		return "completo"
+	case persistence.StatusProvisional:
+		if direction.Reason != "" {
+			return "provisional (" + direction.Reason + ")"
+		}
+		return "provisional"
+	case persistence.StatusIncomplete:
+		if direction.Reason != "" {
+			return "incompleto (" + direction.Reason + ")"
+		}
+		return "incompleto"
+	default:
+		return string(direction.Status)
+	}
+}
+
 // RenderPending returns the stored text of a queued notification. A version 2
 // state could not contain queued notifications, but if a migrated state has one
 // without text this function rebuilds the closest possible message from the
