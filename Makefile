@@ -39,6 +39,7 @@ dist-monitor: check-clean
 	@file $(BIN_ARM64)
 	@$(GO) version -m $(BIN_ARM64) | grep 'vcs\.'
 	@sha256sum $(BIN_ARM64) > $(DIST)/SHA256SUMS
+	@(cd $(DIST) && sha256sum $(notdir $(BIN_ARM64))) > $(DIST)/SHA256SUMS.deploy
 
 test:
 	$(GO) test ./...

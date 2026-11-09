@@ -54,7 +54,7 @@ make dist-monitor
 - inyecta `main.version` (`git describe`), `main.commit` (hash corto) y `main.buildDate`;
 - usa `-buildvcs=true`, así que el binario también lleva `vcs.revision`, `vcs.time` y `vcs.modified`;
 - verifica con `file` que es ARM64 y con `go version -m` el `vcs.revision`;
-- genera `dist/SHA256SUMS`.
+- genera `dist/SHA256SUMS` (rutas `dist/...`) y `dist/SHA256SUMS.deploy` (nombre plano, para la carga).
 
 Salida esperada (los valores cambian en cada build):
 
@@ -68,16 +68,16 @@ dist/oci-infrastructure-monitor-linux-arm64: ELF 64-bit LSB executable, ARM aarc
 
 `vcs.modified=false` es obligatorio para un release. Si es `true`, el árbol tenía cambios y el binario no es reproducible desde ese commit.
 
-### 1.3 Verificar el artefacto y generar el checksum de la carga
+### 1.3 Verificar el artefacto
 
 ```bash
 file dist/oci-infrastructure-monitor-linux-arm64
 go version -m dist/oci-infrastructure-monitor-linux-arm64 | grep 'vcs\.'
-(cd dist && sha256sum oci-infrastructure-monitor-linux-arm64) > dist/SHA256SUMS.deploy
+cat dist/SHA256SUMS
 cat dist/SHA256SUMS.deploy
 ```
 
-El binario es estático y ARM64; no depende de glibc ni de Go en el servidor. `dist/SHA256SUMS` es el que genera el Makefile con rutas `dist/...`; `dist/SHA256SUMS.deploy` es el que se sube a `/home/opc/deploys` y verifica el archivo plano. Ambos contienen el mismo hash.
+El binario es estático y ARM64; no depende de glibc ni de Go en el servidor. `dist/SHA256SUMS` es el del repositorio, con rutas `dist/...`; `dist/SHA256SUMS.deploy` tiene el nombre plano y es el que se sube como `/home/opc/deploys/SHA256SUMS` para verificar el archivo plano. Ambos contienen el mismo hash.
 
 ### 1.4 Subir los archivos a `/home/opc/deploys`
 
@@ -178,6 +178,13 @@ sha256sum -c SHA256SUMS
 ```
 
 Si la suma no coincide, no instales nada: vuelve a subir el binario.
+
+> Si `sha256sum -c` dice `dist/oci-infrastructure-monitor-linux-arm64: No such file or directory`, subiste el `SHA256SUMS` del repositorio en vez de `dist/SHA256SUMS.deploy`. Puedes corregirlo sin volver a subir:
+>
+> ```bash
+> sed -i 's#dist/##' SHA256SUMS
+> sha256sum -c SHA256SUMS
+> ```
 
 Si SELinux está en `Enforcing` (o `Permissive`), normaliza los contextos de la carpeta de carga antes de instalar:
 
@@ -578,7 +585,7 @@ sudo groupdel oci-monitor
 - [ ] `git status --porcelain` vacío antes de compilar.
 - [ ] `make dist-monitor` sale `0` y genera el binario ARM64.
 - [ ] `go version -m` muestra `vcs.revision` = commit y `vcs.modified=false`.
-- [ ] `dist/SHA256SUMS` coincide con el binario.
+- [ ] `dist/SHA256SUMS` y `dist/SHA256SUMS.deploy` coinciden con el binario.
 - [ ] `/home/opc/deploys` contiene el binario, `SHA256SUMS`, `config.example.json`, las dos unidades y, si se quiere, la documentación.
 
 ### Servidor
