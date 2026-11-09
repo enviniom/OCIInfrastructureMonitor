@@ -230,6 +230,42 @@ func TestFormatPercentageTruncates(t *testing.T) {
 	}
 }
 
+func TestFormatPercentageForReportResolvesSmallValues(t *testing.T) {
+	cases := []struct {
+		used, limit int64
+		want        string
+	}{
+		{0, 100, "0,0"},
+		{8996, 10000, "89,9"},
+		{100, 100, "100,0"},
+		{807062248, 9999757606912, "0,008"},
+		{1, 1000000, "<0,001"},
+	}
+	for _, tc := range cases {
+		if got := formatPercentageForReport(tc.used, tc.limit); got != tc.want {
+			t.Errorf("formatPercentageForReport(%d,%d) = %q, want %q", tc.used, tc.limit, got, tc.want)
+		}
+	}
+}
+
+func TestFormatAge(t *testing.T) {
+	cases := map[time.Duration]string{
+		0:                             "0 min",
+		30 * time.Minute:              "30 min",
+		2 * time.Hour:                 "2 h",
+		2*time.Hour + 15*time.Minute:  "2 h 15 min",
+		24 * time.Hour:                "1 día",
+		25 * time.Hour:                "1 día 1 h",
+		48 * time.Hour:                "2 días",
+		51*time.Hour + 20*time.Minute: "2 días 3 h",
+	}
+	for age, want := range cases {
+		if got := formatAge(age); got != want {
+			t.Errorf("formatAge(%s) = %q, want %q", age, got, want)
+		}
+	}
+}
+
 func TestBytesFromGiBSaturates(t *testing.T) {
 	if got := bytesFromGiB(1e30); got != math.MaxInt64 {
 		t.Errorf("bytesFromGiB(1e30) = %d, want MaxInt64", got)

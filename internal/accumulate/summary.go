@@ -16,6 +16,12 @@ type DirectionSummary struct {
 	Provisional int
 	NoData      int
 	Incomplete  int
+	// FirstHour and LastHour are the oldest and newest bucket hour of the
+	// direction, zero when there is no bucket. They are informational: the
+	// daily report uses them to show the covered period. They are recomputed
+	// from the history and are never persisted.
+	FirstHour time.Time
+	LastHour  time.Time
 	// MaxNoDataStreak is the longest run of consecutive no_data hours of one
 	// resource and direction.
 	MaxNoDataStreak int
@@ -74,6 +80,13 @@ func Summarize(history *persistence.History, opts Options) Summary {
 		}
 		direction.Bytes += bucket.Bytes
 		direction.Buckets++
+		hour := bucket.Hour.UTC()
+		if direction.FirstHour.IsZero() || hour.Before(direction.FirstHour) {
+			direction.FirstHour = hour
+		}
+		if direction.LastHour.IsZero() || hour.After(direction.LastHour) {
+			direction.LastHour = hour
+		}
 		switch bucket.Status {
 		case persistence.StatusComplete:
 			direction.Complete++

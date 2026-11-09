@@ -166,8 +166,8 @@ func RenderDailySummary(cfg config.Config, report DailyReport) string {
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&b, "%s %s\n", entry.title, month.Month)
-		writeMonthDigest(&b, cfg, month, entry.current)
+		fmt.Fprintf(&b, "%s %s%s\n", entry.title, month.Month, monthProgress(report.Now, month.Month, entry.current))
+		writeMonthDigest(&b, cfg, month, report.Now, entry.current)
 		b.WriteString("\n")
 	}
 
@@ -177,7 +177,7 @@ func RenderDailySummary(cfg config.Config, report DailyReport) string {
 	return b.String()
 }
 
-func writeMonthDigest(b *strings.Builder, cfg config.Config, month MonthStatus, current bool) {
+func writeMonthDigest(b *strings.Builder, cfg config.Config, month MonthStatus, now time.Time, current bool) {
 	if month.Err != nil {
 		fmt.Fprintf(b, "  estado: error de lectura (%v)\n", month.Err)
 		return
@@ -198,20 +198,126 @@ func writeMonthDigest(b *strings.Builder, cfg config.Config, month MonthStatus, 
 		// of presenting a zero that was never measured.
 		b.WriteString("  consumo saliente: sin datos registrados\n")
 	} else {
+		writeMonthCoverage(b, outbound, now, current)
 		fmt.Fprintf(b, "  consumo saliente: %s (%s bytes)\n", formatGiB(outbound.Bytes), formatThousands(outbound.Bytes))
 		// The limit is the configured value, not a historical one: comparing a
 		// closed month against today's limit could mislead, so it is shown only
 		// for the month in course.
 		if current {
 			if limit := bytesFromGiB(cfg.Network.MonthlyLimitGiB); limit > 0 {
-				fmt.Fprintf(b, "  límite mensual: %s — consumido %s %%\n", formatGiB(limit), formatPercentage(outbound.Bytes, limit))
+				fmt.Fprintf(b, "  límite mensual: %s — consumido %s %%\n", formatGiB(limit), formatPercentageForReport(outbound.Bytes, limit))
 			}
+			writeMonthPace(b, outbound, month.Month)
 		}
 	}
 	fmt.Fprintf(b, "  estado del acumulado: %s\n", accumulatedLabel(outbound))
 	fmt.Fprintf(b, "  buckets: %d (%d complete, %d provisional, %d no_data, %d incomplete)\n",
 		outbound.Buckets, outbound.Complete, outbound.Provisional, outbound.NoData, outbound.Incomplete)
 	fmt.Fprintf(b, "  estado del mes: %s\n", MonthStateLabel(month))
+}
+
+// monthProgress adds the day of the month to the current month title, so the
+// reader can judge the total against the elapsed period.
+func monthProgress(now time.Time, month string, current bool) string {
+	if !current {
+		return ""
+	}
+	start, err := persistence.MonthStart(month)
+	if err != nil {
+		return ""
+	}
+	end, err := persistence.MonthEnd(month)
+	if err != nil {
+		return ""
+	}
+	days := int(end.Sub(start).Hours() / 24)
+	day := now.UTC().Day()
+	if day < 1 || day > days {
+		return ""
+	}
+	return fmt.Sprintf(" (día %d de %d)", day, days)
+}
+
+// writeMonthCoverage shows which hourly period the total covers and, for the
+// month in course, how old the newest bucket is. Without it the reader has to
+// subtract two timestamps to know whether the figures are fresh.
+func writeMonthCoverage(b *strings.Builder, outbound accumulate.DirectionSummary, now time.Time, current bool) {
+	if outbound.FirstHour.IsZero() || outbound.LastHour.IsZero() {
+		return
+	}
+	fmt.Fprintf(b, "  datos: %s → %s UTC", formatHour(outbound.FirstHour), formatHour(outbound.LastHour))
+	if current {
+		age := now.Sub(outbound.LastHour.Add(time.Hour))
+		if age < 0 {
+			age = 0
+		}
+		fmt.Fprintf(b, " (hace %s)", formatAge(age))
+	}
+	b.WriteString("\n")
+}
+
+// writeMonthPace estimates the daily rate over the covered period and the
+// month projection at that rate. It is skipped for the previous month and when
+// the coverage is shorter than a day, where the extrapolation would be noise.
+func writeMonthPace(b *strings.Builder, outbound accumulate.DirectionSummary, month string) {
+	if outbound.Bytes <= 0 || outbound.FirstHour.IsZero() || outbound.LastHour.IsZero() {
+		return
+	}
+	covered := outbound.LastHour.Add(time.Hour).Sub(outbound.FirstHour)
+	if covered < 24*time.Hour {
+		return
+	}
+	start, err := persistence.MonthStart(month)
+	if err != nil {
+		return
+	}
+	end, err := persistence.MonthEnd(month)
+	if err != nil {
+		return
+	}
+	average := float64(outbound.Bytes) / float64(1<<30) / (covered.Hours() / 24)
+	projection := average * (end.Sub(start).Hours() / 24)
+	fmt.Fprintf(b, "  media: %s GiB/día · proyección al ritmo actual: ~%s GiB/mes\n",
+		formatDecimal(average), formatDecimal(projection))
+}
+
+// formatAge renders a duration for the data-age line, rounded to minutes.
+func formatAge(age time.Duration) string {
+	if age < 0 {
+		age = 0
+	}
+	minutes := int(age.Round(time.Minute).Minutes())
+	if minutes < 60 {
+		return fmt.Sprintf("%d min", minutes)
+	}
+	hours := minutes / 60
+	minutes %= 60
+	if hours < 24 {
+		if minutes == 0 {
+			return fmt.Sprintf("%d h", hours)
+		}
+		return fmt.Sprintf("%d h %d min", hours, minutes)
+	}
+	days := hours / 24
+	hours %= 24
+	switch {
+	case hours == 0 && days == 1:
+		return "1 día"
+	case hours == 0:
+		return fmt.Sprintf("%d días", days)
+	case days == 1:
+		return fmt.Sprintf("1 día %d h", hours)
+	default:
+		return fmt.Sprintf("%d días %d h", days, hours)
+	}
+}
+
+func formatHour(t time.Time) string {
+	return t.UTC().Format("2006-01-02 15:04")
+}
+
+func formatDecimal(value float64) string {
+	return strings.Replace(strconv.FormatFloat(value, 'f', 2, 64), ".", ",", 1)
 }
 
 func writeDigestWarnings(b *strings.Builder, report DailyReport) {
@@ -469,19 +575,48 @@ func formatThousands(value int64) string {
 }
 
 func formatPercentage(used, limit int64) string {
+	return formatPercentageDecimals(used, limit, 1)
+}
+
+// formatPercentageForReport truncates to one decimal like the alerts, but when
+// that would show 0,0 % for a non-zero consumption it uses three decimals so a
+// small amount is not presented as zero.
+func formatPercentageForReport(used, limit int64) string {
+	text := formatPercentage(used, limit)
+	if text != "0,0" || used <= 0 {
+		return text
+	}
+	text = formatPercentageDecimals(used, limit, 3)
+	if text == "0,000" {
+		return "<0,001"
+	}
+	return text
+}
+
+// formatPercentageDecimals truncates used/limit*100 to decimals and writes the
+// decimal separator as a comma.
+func formatPercentageDecimals(used, limit int64, decimals int) string {
 	if limit <= 0 {
-		return "0,0"
+		if decimals == 0 {
+			return "0"
+		}
+		return "0," + strings.Repeat("0", decimals)
 	}
 	if used < 0 {
 		used = 0
 	}
-	tenths := new(big.Int).Mul(big.NewInt(used), big.NewInt(1000))
-	tenths.Quo(tenths, big.NewInt(limit))
-	text := tenths.String()
-	if len(text) == 1 {
-		return "0," + text
+	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	scaled := new(big.Int).Mul(big.NewInt(used), big.NewInt(100))
+	scaled.Mul(scaled, scale)
+	scaled.Quo(scaled, big.NewInt(limit))
+	text := scaled.String()
+	for len(text) <= decimals {
+		text = "0" + text
 	}
-	return text[:len(text)-1] + "," + text[len(text)-1:]
+	if decimals == 0 {
+		return text
+	}
+	return text[:len(text)-decimals] + "," + text[len(text)-decimals:]
 }
 
 func formatPercentList(values []int) string {

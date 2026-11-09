@@ -186,6 +186,8 @@ oci-infrastructure-monitor --help
 
 `report` no consulta OCI ni toma el lock: las cifras son las del último `run` y el mensaje cita la última consulta exitosa, así que una recogida parada se nota. Si no hay ningún dato en el historial no envía nada (ni un «sin datos» diario); si `telegram.enabled=false`, tampoco envía. Un historial corrupto del mes anterior no impide el envío del resumen del mes en curso: el mensaje lo advierte y el comando sale `4`.
 
+El mensaje indica el rango cubierto (`datos: … → …`, con la antigüedad de la última hora para el mes en curso), el día del mes, la media diaria y una proyección al ritmo actual. El porcentaje del límite usa tres decimales cuando es menor que 0,1 %, para que un consumo pequeño no se lea como `0,0 %`.
+
 ### Códigos de salida
 
 | Código | Significado |

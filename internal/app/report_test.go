@@ -35,6 +35,7 @@ func digestStatus() StatusReport {
 					Outbound: accumulate.DirectionSummary{
 						Direction: persistence.DirectionOutbound, Bytes: 1 << 30,
 						Buckets: 168, Complete: 168, Status: persistence.StatusComplete,
+						FirstHour: utcHour(2026, 11, 1, 0), LastHour: utcHour(2026, 11, 7, 23),
 					},
 				},
 			},
@@ -46,6 +47,7 @@ func digestStatus() StatusReport {
 					Outbound: accumulate.DirectionSummary{
 						Direction: persistence.DirectionOutbound, Bytes: 2 << 30,
 						Buckets: 744, Complete: 744, Status: persistence.StatusComplete,
+						FirstHour: utcHour(2026, 10, 1, 0), LastHour: utcHour(2026, 10, 31, 23),
 					},
 				},
 			},
@@ -63,13 +65,16 @@ func TestRenderDailySummary(t *testing.T) {
 		"fecha de evaluación: 2026-11-08 12:00:00 UTC",
 		"última consulta exitosa: 2026-11-08 11:00:00 UTC",
 		"medición: tráfico saliente de red (VnicToNetworkBytes, suma horaria)",
-		"mes en curso 2026-11",
+		"mes en curso 2026-11 (día 8 de 30)",
+		"datos: 2026-11-01 00:00 → 2026-11-07 23:00 UTC (hace 12 h)",
 		"consumo saliente: 1,00 GiB (1.073.741.824 bytes)",
 		"límite mensual: 10,00 GiB — consumido 10,0 %",
+		"media: 0,14 GiB/día · proyección al ritmo actual: ~4,29 GiB/mes",
 		"estado del acumulado: completo",
 		"buckets: 168 (168 complete, 0 provisional, 0 no_data, 0 incomplete)",
 		"estado del mes: abierto",
 		"mes anterior 2026-10",
+		"datos: 2026-10-01 00:00 → 2026-10-31 23:00 UTC",
 		"consumo saliente: 2,00 GiB (2.147.483.648 bytes)",
 		"estado del mes: finalizado el 2026-11-03 00:00:00 UTC",
 		"avisos:",
@@ -87,6 +92,33 @@ func TestRenderDailySummary(t *testing.T) {
 	// previous total has no historical limit of its own.
 	if got := strings.Count(out, "límite mensual:"); got != 1 {
 		t.Errorf("limit lines = %d, want 1:\n%s", got, out)
+	}
+}
+
+func TestRenderDailySummaryTinyPercentage(t *testing.T) {
+	cfg := digestConfig()
+	cfg.Network.MonthlyLimitGiB = 9313
+	status := digestStatus()
+	status.Months[0].Summary.Outbound.Bytes = 807062248
+
+	out := RenderDailySummary(cfg, DailyReport{Now: utcHour(2026, 11, 8, 12), Status: status})
+	if !strings.Contains(out, "consumido 0,008 %") {
+		t.Errorf("output missing the three-decimal percentage:\n%s", out)
+	}
+}
+
+func TestRenderDailySummarySkipsPaceWithoutADay(t *testing.T) {
+	cfg := digestConfig()
+	status := digestStatus()
+	status.Months[0].Summary.Outbound.FirstHour = utcHour(2026, 11, 8, 0)
+	status.Months[0].Summary.Outbound.LastHour = utcHour(2026, 11, 8, 10)
+
+	out := RenderDailySummary(cfg, DailyReport{Now: utcHour(2026, 11, 8, 12), Status: status})
+	if !strings.Contains(out, "datos: 2026-11-08 00:00 → 2026-11-08 10:00 UTC (hace 1 h)") {
+		t.Errorf("output missing the short coverage line:\n%s", out)
+	}
+	if strings.Contains(out, "media:") {
+		t.Errorf("output has a daily rate from less than a day of data:\n%s", out)
 	}
 }
 

@@ -41,6 +41,30 @@ func TestSummarizeTotalsAndCounts(t *testing.T) {
 	if summary.Status != persistence.StatusProvisional {
 		t.Errorf("Status = %s, want provisional", summary.Status)
 	}
+	if !summary.Outbound.FirstHour.Equal(utcHour(2026, 11, 1, 0)) {
+		t.Errorf("FirstHour = %s, want 2026-11-01 00:00", summary.Outbound.FirstHour)
+	}
+	if !summary.Outbound.LastHour.Equal(utcHour(2026, 11, 1, 3)) {
+		t.Errorf("LastHour = %s, want 2026-11-01 03:00", summary.Outbound.LastHour)
+	}
+	if !summary.Inbound.FirstHour.IsZero() || !summary.Inbound.LastHour.IsZero() {
+		t.Errorf("inbound coverage = %s..%s, want zero", summary.Inbound.FirstHour, summary.Inbound.LastHour)
+	}
+}
+
+func TestSummarizeCoverageWithOutOfOrderBuckets(t *testing.T) {
+	history := persistence.NewHistory("2026-11")
+	addBucket(history, "vnic-a", persistence.DirectionOutbound, utcHour(2026, 11, 1, 5), 10, persistence.StatusComplete)
+	addBucket(history, "vnic-a", persistence.DirectionOutbound, utcHour(2026, 11, 1, 1), 20, persistence.StatusComplete)
+	addBucket(history, "vnic-a", persistence.DirectionOutbound, utcHour(2026, 11, 1, 3), 30, persistence.StatusComplete)
+
+	summary := Summarize(history, testOptions())
+	if !summary.Outbound.FirstHour.Equal(utcHour(2026, 11, 1, 1)) {
+		t.Errorf("FirstHour = %s, want 2026-11-01 01:00", summary.Outbound.FirstHour)
+	}
+	if !summary.Outbound.LastHour.Equal(utcHour(2026, 11, 1, 5)) {
+		t.Errorf("LastHour = %s, want 2026-11-01 05:00", summary.Outbound.LastHour)
+	}
 }
 
 func TestSummarizeIncompleteWins(t *testing.T) {
