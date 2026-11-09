@@ -54,6 +54,8 @@ func execute(args []string) int {
 		return executeCheck(args[1:])
 	case "status":
 		return executeStatus(args[1:])
+	case "report":
+		return executeReport(args[1:])
 	case "test-telegram":
 		return executeTestTelegram(args[1:])
 	case "version", "--version", "-version":
@@ -198,6 +200,83 @@ func executeTestTelegram(args []string) int {
 	return 0
 }
 
+// executeReport sends the daily digest of the current and previous months. It
+// only reads state.json and the histories: it never queries OCI, never takes
+// the lock and never writes state, so it cannot interfere with the run cycle.
+// The figures are those of the last successful run; the message quotes that
+// instant so staleness is visible.
+func executeReport(args []string) int {
+	fs := flag.NewFlagSet("report", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	configPath := fs.String("config", config.DefaultPath, "ruta del archivo de configuración")
+	telegramEnv := fs.String("telegram-env", telegram.DefaultEnvPath, "ruta del archivo con TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID")
+	dryRun := fs.Bool("dry-run", false, "imprime el resumen en stdout sin enviarlo por Telegram")
+	if code, ok := parseFlags(fs, args); !ok {
+		return code
+	}
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
+		return 2
+	}
+
+	now := time.Now().UTC()
+	store := persistence.New(cfg.Storage.StateDir)
+	// Read-only, like status: a corrupt file is reported but never moved.
+	report := app.BuildDailyReport(store, cfg, now)
+	for _, err := range report.Status.Errors {
+		fmt.Fprintf(os.Stderr, "report: aviso de estado: %v\n", err)
+	}
+	text := app.RenderDailySummary(cfg, report)
+
+	if *dryRun {
+		fmt.Println(text)
+		return reportExitCode(report, 0)
+	}
+
+	if !cfg.Telegram.Enabled {
+		fmt.Println("report: telegram.enabled=false; no se envía el resumen diario")
+		return reportExitCode(report, 0)
+	}
+
+	credentials, err := telegram.LoadCredentials(*telegramEnv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "configuration error: %v\n", err)
+		return 2
+	}
+
+	if !report.HasData {
+		fmt.Println("report: no hay datos en el historial; no se envía el resumen diario")
+		return reportExitCode(report, 0)
+	}
+
+	sender, err := newTelegramSender(credentials)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Telegram: %v\n", err)
+		return 2
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := sender.SendMessage(ctx, text); err != nil {
+		fmt.Fprintf(os.Stderr, "Telegram: no se pudo enviar el resumen diario: %v\n", err)
+		return reportExitCode(report, 5)
+	}
+	fmt.Println("report: resumen diario enviado")
+	return reportExitCode(report, 0)
+}
+
+// reportExitCode applies the documented priority: a persistence problem (4)
+// wins over a Telegram failure (5), so a corrupt state is never hidden behind
+// the outcome of the delivery.
+func reportExitCode(report app.DailyReport, code int) int {
+	if len(report.Status.Errors) > 0 {
+		return 4
+	}
+	return code
+}
+
 func executeStatus(args []string) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -292,9 +371,13 @@ func writeRunReport(w, errW io.Writer, report app.RunReport) {
 	if report.PendingKnown {
 		pending = fmt.Sprint(report.Pending)
 	}
-	fmt.Fprintf(w, "%s: consultas_oci=%d fallos_oci=%d enviadas=%d encoladas=%d pendientes=%s caducadas=%d descartadas=%d código=%d\n",
+	fmt.Fprintf(w, "%s: consultas_oci=%d fallos_oci=%d enviadas=%d encoladas=%d pendientes=%s caducadas=%d descartadas=%d",
 		label, report.Collect.Queries, len(report.Collect.Failures), len(report.Sent),
-		report.Enqueued, pending, report.Expired, report.Dropped, report.ExitCode)
+		report.Enqueued, pending, report.Expired, report.Dropped)
+	if report.DailyReportDue {
+		fmt.Fprintf(w, " resumen_diario=%s", dailyReportOutcome(report))
+	}
+	fmt.Fprintf(w, " código=%d\n", report.ExitCode)
 	if report.DryRun {
 		fmt.Fprintf(w, "run (simulación): no se escribió estado, no se encoló nada, no se envió nada; alertas simuladas=%d\n", report.WouldSend)
 	}
@@ -312,6 +395,19 @@ func writeRunReport(w, errW io.Writer, report app.RunReport) {
 	}
 	if report.ConcurrencyError != nil {
 		fmt.Fprintf(errW, "concurrencia: %v\n", report.ConcurrencyError)
+	}
+}
+
+func dailyReportOutcome(report app.RunReport) string {
+	switch {
+	case report.DryRun:
+		return "simulado"
+	case report.DailyReportSent:
+		return "enviado"
+	case report.DailyReportError != nil:
+		return "fallido"
+	default:
+		return "omitido"
 	}
 }
 
@@ -373,16 +469,22 @@ func usage(w io.Writer) {
   oci-infrastructure-monitor run [--dry-run] [--config PATH] [--telegram-env PATH]
   oci-infrastructure-monitor check [--config PATH]
   oci-infrastructure-monitor status [--config PATH]
+  oci-infrastructure-monitor report [--dry-run] [--config PATH] [--telegram-env PATH]
   oci-infrastructure-monitor test-telegram [--config PATH] [--telegram-env PATH]
   oci-infrastructure-monitor version | --version
   oci-infrastructure-monitor --help
 
 run: consulta OCI, actualiza el estado y envía las alertas y los pendientes por Telegram.
      Un fallo de OCI no aborta la ejecución. --dry-run no escribe estado, no encola y no envía.
+     En la ejecución cuya hora local coincide con telegram.daily_report_hour (18 por defecto)
+     envía además el resumen diario del mes en curso y del mes anterior.
 check: valida configuración, autenticación y visibilidad de las VNIC en OCI Monitoring.
        No modifica estado ni configuración.
 status: muestra el estado persistido sin consultar OCI ni escribir estado ni historial.
         Si encuentra un archivo corrupto lo informa y sale 4; no lo mueve.
+report: envía por demanda el mismo resumen diario; sirve para probarlo o reenviarlo si el run
+        de esa hora no ocurrió. Solo lee el estado y el historial: no consulta OCI ni escribe
+        estado. --dry-run imprime el resumen en stdout sin enviarlo; sin ningún dato no envía nada.
 test-telegram: envía un mensaje de prueba explícito. Funciona aunque telegram.enabled sea false.
 
 El token y el Chat ID se leen de telegram.env (TELEGRAM_BOT_TOKEN y TELEGRAM_CHAT_ID) o del

@@ -50,6 +50,12 @@ type Network struct {
 // Telegram holds the Telegram notification settings. Credentials live in telegram.env.
 type Telegram struct {
 	Enabled bool `json:"enabled"`
+	// DailyReportHour is the local hour (0-23) of the run that also sends the
+	// daily report; -1 disables it. The default (18) is applied by Default, so
+	// an existing configuration file without the key keeps the previous
+	// behavior. The hour is compared against the server's local time, the same
+	// zone the systemd timer uses.
+	DailyReportHour int `json:"daily_report_hour"`
 }
 
 // Storage holds the persistent state settings.
@@ -78,7 +84,7 @@ func Default() Config {
 			CollectionFailureThreshold:     3,
 			CollectionFailureCooldownHours: 24,
 		},
-		Telegram: Telegram{Enabled: true},
+		Telegram: Telegram{Enabled: true, DailyReportHour: 18},
 		Storage:  Storage{StateDir: "/var/lib/oci-infrastructure-monitor"},
 		Logging:  Logging{Level: "info"},
 	}
@@ -180,6 +186,10 @@ func (c Config) Validate() error {
 	}
 	if c.Network.HighTraffic6HGiB < 0 || math.IsNaN(c.Network.HighTraffic6HGiB) || math.IsInf(c.Network.HighTraffic6HGiB, 0) {
 		add("network.high_traffic_6h_gib must be a finite number greater than or equal to 0")
+	}
+
+	if c.Telegram.DailyReportHour < -1 || c.Telegram.DailyReportHour > 23 {
+		add("telegram.daily_report_hour must be -1 (disabled) or an hour between 0 and 23")
 	}
 
 	if c.Network.Enabled {

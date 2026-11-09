@@ -1,10 +1,10 @@
 # OCI Infrastructure Monitor
 
-Aplicación `oneshot` en Go que mide el tráfico de red **saliente** de una o varias VNIC de Oracle Cloud Infrastructure (OCI), acumula el consumo por hora y por mes, y envía alertas preventivas por Telegram.
+Aplicación `oneshot` en Go que mide el tráfico de red **saliente** de una o varias VNIC de Oracle Cloud Infrastructure (OCI), acumula el consumo por hora y por mes, envía alertas preventivas por Telegram y publica un resumen diario del mes en curso y del anterior.
 
 La v1 cubre solo red. CPU, RAM, disco, servicios Linux, respaldos y almacenamiento OCI quedan para fases posteriores.
 
-> **Estado:** implementación de la v1 cerrada (hitos 1–5). Las pruebas se ejecutaron con mocks y un servidor HTTP simulado; las validaciones contra OCI, Telegram y el servidor real siguen pendientes y se listan en [`docs/progress.md`](docs/progress.md#pendientes-de-validación-real). No se ha desplegado nada en producción desde este repositorio.
+> **Estado:** implementación de la v1 cerrada (hitos 1–5) más el resumen diario añadido el 2026-11-08. Las pruebas se ejecutaron con mocks y un servidor HTTP simulado; las validaciones contra OCI, Telegram y el servidor real siguen pendientes y se listan en [`docs/progress.md`](docs/progress.md#pendientes-de-validación-real). No se ha desplegado nada en producción desde este repositorio.
 
 ## Advertencia: tráfico registrado no es tráfico facturable
 
@@ -24,8 +24,9 @@ La aplicación suma `VnicToNetworkBytes`, la métrica de la VNIC. Ese valor:
 - Evalúa cuatro umbrales mensuales (`alert_percentages`) y un consumo anormal en 6 h, con deduplicación y enfriamiento.
 - Encola las notificaciones pendientes (máximo 50, caducidad 7 días), las colapsa por período y tipo, y las reintenta.
 - Alerta de error persistente de recopilación a los 3 fallos consecutivos y avisa de la recuperación.
-- Ofrece `check`, `status`, `run`, `run --dry-run`, `test-telegram` y `version`.
-- Se ejecuta desde systemd con un timer cada 6 horas.
+- Envía un resumen diario por Telegram con el saliente del mes en curso y el total del mes anterior en la ejecución de las 18:00 (hora local, configurable con `telegram.daily_report_hour`).
+- Ofrece `check`, `status`, `run`, `run --dry-run`, `report`, `report --dry-run`, `test-telegram` y `version`.
+- Se ejecuta desde systemd con un timer cada 6 horas; el `run` de la hora configurada envía además el resumen.
 
 ## Requisitos
 
@@ -76,11 +77,12 @@ sudo systemctl daemon-reload
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor check
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor test-telegram
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor run --dry-run
+sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor report --dry-run
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor run
 
 # 6. Timer
 sudo systemctl enable --now oci-infrastructure-monitor.timer
-systemctl list-timers oci-infrastructure-monitor.timer
+systemctl list-timers 'oci-infrastructure-monitor*'
 ```
 
 No se habilita el `service`: solo el timer. El `service` no tiene sección `[Install]` a propósito.
@@ -108,7 +110,7 @@ Archivo por defecto: `/etc/oci-infrastructure-monitor/config.json` (`--config` p
     "collection_failure_cooldown_hours": 24,
     "collect_inbound": false
   },
-  "telegram": { "enabled": true },
+  "telegram": { "enabled": true, "daily_report_hour": 18 },
   "storage": { "state_dir": "/var/lib/oci-infrastructure-monitor" },
   "logging": { "level": "info" }
 }
@@ -135,10 +137,13 @@ Copia lista para editar: [`configs/config.example.json`](configs/config.example.
 | `network.collection_failure_cooldown_hours` | `24` | Enfriamiento de esa alerta, mínimo 1 |
 | `network.collect_inbound` | `false` | Si es `true`, guarda también `VnicFromNetworkBytes` como informativo; nunca se suma al saliente |
 | `telegram.enabled` | `true` | `false` evalúa y registra, pero no encola, no envía ni marca como enviado |
+| `telegram.daily_report_hour` | `18` | Hora local del servidor (0–23) en la que `run` envía el resumen diario; `-1` lo desactiva |
 | `storage.state_dir` | `/var/lib/oci-infrastructure-monitor` | Ruta absoluta; debe ser escribible por el usuario del servicio |
 | `logging.level` | `info` | `debug`, `info`, `warn` o `error` |
 
 Los valores booleanos no distinguen “ausente” de `false`: `enabled` vale `true` por defecto, así que para deshabilitar la red o Telegram hay que escribir explícitamente `"enabled": false`.
+
+Un `config.json` existente sin `telegram.daily_report_hour` sigue enviando el resumen a las 18:00: el valor por defecto se aplica al leer y no hace falta editar el archivo para actualizar solo el binario.
 
 ### Credenciales de Telegram
 
@@ -160,6 +165,7 @@ TELEGRAM_CHAT_ID=123456789
 oci-infrastructure-monitor run [--dry-run] [--config PATH] [--telegram-env PATH]
 oci-infrastructure-monitor check [--config PATH]
 oci-infrastructure-monitor status [--config PATH]
+oci-infrastructure-monitor report [--dry-run] [--config PATH] [--telegram-env PATH]
 oci-infrastructure-monitor test-telegram [--config PATH] [--telegram-env PATH]
 oci-infrastructure-monitor version | --version
 oci-infrastructure-monitor --help
@@ -167,12 +173,18 @@ oci-infrastructure-monitor --help
 
 | Comando | Qué hace | Escribe estado |
 |---|---|---|
-| `run` | Ciclo completo de 13 pasos: lock, recopilación, historial, cola, alertas, envío | Sí, tras cada envío y al final |
+| `run` | Ciclo completo de 13 pasos: lock, recopilación, historial, cola, alertas, envío y resumen diario en la hora configurada | Sí, tras cada envío y al final |
 | `run --dry-run` | Lee y calcula; informa de lo que se habría enviado | No escribe `state.json` ni historiales; puede crear el directorio de estado, `history/` y `lock` |
 | `check` | Valida configuración, autenticación y visibilidad de las VNIC; no consulta estado | No |
 | `status` | Muestra el estado persistido en texto, sin consultar OCI | No; informa de un archivo corrupto sin moverlo |
+| `report` | Envía por demanda el mismo resumen diario que `run` publica en la hora configurada | No; es de solo lectura como `status` |
+| `report --dry-run` | Imprime ese resumen en stdout sin enviarlo ni escribir nada | No |
 | `test-telegram` | Envía un mensaje de prueba explícito | No; lee el estado sin cuarentena |
 | `version` | Versión, commit, fecha, Go y arquitectura; úsalo en el servidor para saber qué código está desplegado | No |
+
+`run` envía el resumen diario después de persistir el estado, en la ejecución cuya hora local coincide con `telegram.daily_report_hour` (18 por defecto). No pasa por la cola: si el envío falla, `run` sale `5` (salvo que haya un error de mayor prioridad) y el resumen de ese día no se reintenta. Un segundo `run` manual en la misma hora vuelve a enviarlo; el timer programado dispara una sola vez. Si esa ejecución no ocurre (servidor apagado, lock ocupado), `report` lo envía a mano.
+
+`report` no consulta OCI ni toma el lock: las cifras son las del último `run` y el mensaje cita la última consulta exitosa, así que una recogida parada se nota. Si no hay ningún dato en el historial no envía nada (ni un «sin datos» diario); si `telegram.enabled=false`, tampoco envía. Un historial corrupto del mes anterior no impide el envío del resumen del mes en curso: el mensaje lo advierte y el comando sale `4`.
 
 ### Códigos de salida
 
@@ -188,11 +200,17 @@ oci-infrastructure-monitor --help
 
 Con varios errores a la vez, `run` aplica la prioridad `2` > `4` > `3` > `5` y deja todos en el log. Un fallo de OCI no aborta: se envían los pendientes, el acumulado queda incompleto y se sale `3`. Cualquier código distinto de `0` deja la unidad systemd en `failed`.
 
+`report` usa solo `2` (configuración o credenciales), `4` (persistencia) y `5` (Telegram), con la prioridad `2` > `4` > `5`. No devuelve `3` ni `6` porque no consulta OCI ni toma el lock. Un fallo del resumen dentro de `run` se contabiliza como error de Telegram (`5`) pero no deshace la recogida ni las alertas ya enviadas; un `report` enviado con un historial ilegible deja la unidad en `failed` (`4`).
+
 ## Operación
 
 ```bash
 # Estado persistido (texto para humanos)
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor status
+
+# Resumen diario: ver el mensaje y enviarlo a mano
+sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor report --dry-run
+sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor report
 
 # Simulación sin escribir ni enviar
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor run --dry-run
@@ -202,13 +220,15 @@ sudo systemctl start oci-infrastructure-monitor.service
 sudo systemctl status oci-infrastructure-monitor.service
 
 # Timer y próxima ejecución
-systemctl list-timers oci-infrastructure-monitor.timer
+systemctl list-timers 'oci-infrastructure-monitor*'
 systemd-analyze calendar '*-*-* 00/6:00:00'
 
 # Logs
 journalctl -u oci-infrastructure-monitor.service -n 100 --no-pager
 journalctl -u oci-infrastructure-monitor.service -p warning --since today
 ```
+
+El resumen automático sale en el `run` de las 18:00; `run --dry-run` a esa hora registra `simulación: se habría enviado el resumen diario` sin enviarlo.
 
 `status` muestra el directorio, el esquema, la última ejecución, la última consulta exitosa, los fallos consecutivos, las pendientes y, para el mes actual y el anterior, el saliente en GiB y bytes, el estado del acumulado, el conteo de buckets, el entrante informativo y las correcciones de la gracia.
 
@@ -248,7 +268,7 @@ git diff 6a077c084793..HEAD
 
 ```text
 .
-├── cmd/monitor/              CLI: run, check, status, test-telegram, version
+├── cmd/monitor/              CLI: run, check, status, report, test-telegram, version
 ├── configs/
 │   └── config.example.json   Ejemplo sin secretos ni OCIDs reales
 ├── dist/                     Binarios y SHA256SUMS (no versionado)
@@ -271,7 +291,7 @@ git diff 6a077c084793..HEAD
 │   ├── outbox/               Cola de pendientes, TTL y colapso
 │   ├── persistence/          state.json, historial, esquema, escritura atómica y flock
 │   └── telegram/             Credenciales y transporte HTTP
-├── systemd/                  Unidades service y timer
+├── systemd/                  service y timer de recogida (cada 6 h)
 ├── Makefile                  Build ARM64 con commit embebido y verificación
 ├── Roadmap.md                Roadmap original (se conserva; ver tag roadmap-final)
 ├── go.mod / go.sum
@@ -349,8 +369,9 @@ sha256sum -c dist/SHA256SUMS
 - `ListMetrics` no prueba existencia: `check` avisa, no afirma que una VNIC no exista.
 - La v1 asume un único compartimento de subred (`network.compartment_ocid`) para todas las VNIC.
 - El tráfico registrado no es el facturable.
+- El resumen diario se envía desde el `run` de la hora configurada (18:00 por defecto) con los datos de esa misma recogida, pero no pasa por la cola: si Telegram falla, el envío de ese día se pierde y no se reintenta hasta el día siguiente. Si el `run` de esa hora no ocurre (servidor apagado, lock ocupado), tampoco se envía; `report` lo reenvía a mano. Un segundo `run` manual en la misma hora duplica el resumen: no hay marca persistida de «ya enviado hoy».
 - Si el proceso está caído más de un mes, `MonthlyThresholds` no alerta los umbrales del mes intermedio: solo evalúa el mes en curso. El total se reconstruye desde el historial al volver.
-- Sin validar en producción: `check` contra OCI, Dynamic Group, envío real a Telegram, `429` real, timer real, SELinux y permisos del usuario del servicio.
+- Sin validar en producción: `check` contra OCI, Dynamic Group, envío real a Telegram, `429` real, timer real, resumen diario, SELinux y permisos del usuario del servicio.
 
 Lista viva y evidencia: [`docs/progress.md`](docs/progress.md).
 

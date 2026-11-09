@@ -4,7 +4,7 @@
 
 ## Alcance
 
-Un único ejecutable `oneshot` en Go. Mide el tráfico saliente de una o varias VNIC de OCI, lo acumula por bucket horario UTC y alerta por Telegram. No hay daemon, base de datos ni interfaz web. La v1 solo cubre red; CPU, RAM, disco, servicios Linux, respaldos y almacenamiento quedan para fases posteriores.
+Un único ejecutable `oneshot` en Go. Mide el tráfico saliente de una o varias VNIC de OCI, lo acumula por bucket horario UTC, alerta por Telegram y publica un resumen diario con el mes en curso y el anterior. No hay daemon, base de datos ni interfaz web. La v1 solo cubre red; CPU, RAM, disco, servicios Linux, respaldos y almacenamiento quedan para fases posteriores.
 
 ## Ciclo de `run` (13 pasos)
 
@@ -26,7 +26,7 @@ Garantías del ciclo:
 9. Vaciar la cola de pendientes: enviar y persistir `state.json` tras cada envío exitoso.
 10. Evaluar umbrales mensuales y consumo anormal con los datos disponibles.
 11. Encolar y enviar las notificaciones nuevas; persistir `state.json` tras cada envío exitoso.
-12. Actualizar la última ejecución, la última consulta exitosa, los contadores de fallos y el estado de alertas.
+12. Actualizar la última ejecución, la última consulta exitosa, los contadores de fallos y el estado de alertas; si la hora local coincide con `telegram.daily_report_hour`, enviar el resumen diario desde el estado ya persistido.
 13. Registrar el resumen, liberar el `flock` y salir con el código correspondiente.
 
 Con `--dry-run`: se ejecutan los pasos de lectura y cálculo, pero no se escribe estado, no se encola ni se envía nada, y no se marca ninguna alerta como enviada. La lectura tampoco mueve un archivo corrupto: se informa y se sale sin tocarlo.
@@ -195,7 +195,20 @@ Todos los archivos llevan `"schema_version": 3` desde el Hito 4. La lectura acep
 
 La unidad del acumulado es GiB (2^30); el porcentaje se trunca a un decimal (lo hace el evaluador del Hito 3).
 
-`test-telegram` y `status` leen el estado y el historial con la cuarentena desactivada: informan de un archivo corrupto pero no lo mueven. Solo `run` real (con el lock) aplica la cuarentena documentada; `status` sale `4` si la encuentra.
+`test-telegram`, `status` y `report` leen el estado y el historial con la cuarentena desactivada: informan de un archivo corrupto pero no lo mueven. Solo `run` real (con el lock) aplica la cuarentena documentada; `status` y `report` salen `4` si la encuentran.
+
+### `report` y resumen diario
+
+`run` envía el resumen diario en la ejecución cuya hora local coincide con `telegram.daily_report_hour` (18 por defecto; `-1` lo desactiva). Lo construye desde el estado ya persistido al final del ciclo, con los datos de esa misma recogida, y no lo encola: es una publicación periódica, no una alerta. La hora se compara en la zona local del servidor, la misma que usa el timer de systemd, y el disparo de las 18:00 con su retardo aleatorio (hasta 15 min) cae en la hora 18. Un fallo del envío se registra como error de Telegram y deja la ejecución en `5` (salvo que haya un error de mayor prioridad), pero no deshace la recogida ni las alertas ya enviadas.
+
+- Por el mes en curso incluye el consumo saliente en GiB y bytes, el porcentaje del límite configurado (truncado a un decimal), el estado del acumulado (`completo`, `provisional`, `incompleto`), el conteo de buckets y el estado del mes (abierto, en gracia, finalizado…). Del mes anterior muestra el total y los mismos indicadores, salvo el porcentaje: el límite configurado es el actual y comparar un mes cerrado contra él podría engañar.
+- Sin ningún bucket en los dos meses no se envía nada; con `telegram.enabled=false` tampoco. `run --dry-run` registra que se habría enviado, sin enviar.
+- Un segundo `run` manual en la misma hora vuelve a enviarlo: no hay marca persistida de «ya enviado hoy». Si el `run` de esa hora no ocurre (servidor apagado, lock ocupado), el resumen no se envía ese día.
+
+`report` es el mismo resumen por demanda y de solo lectura: no consulta OCI, no toma el lock y no escribe estado ni historial. Sirve para probar el mensaje y para enviarlo si el `run` de la hora configurada no ocurrió o si el envío falló.
+
+- `report --dry-run` imprime el mensaje en stdout sin enviarlo ni escribir nada.
+- Códigos: `2` configuración o credenciales, `4` persistencia, `5` Telegram, con prioridad `2` > `4` > `5`. Un historial corrupto de un mes no impide enviar el otro con aviso, pero el comando termina en `failed`.
 
 ## Alertas (Hito 3)
 
@@ -313,6 +326,8 @@ El `service` no tiene sección `[Install]`: solo se habilita el `timer`. Así se
 - `Persistent=true`: si el servidor estaba apagado en el disparo, la ejecución se recupera al arrancar.
 - `Unit=oci-infrastructure-monitor.service`, `WantedBy=timers.target`.
 
+El `run` de las 18:00 envía además el resumen diario; no hay un timer separado para él.
+
 ### Compilación y artefactos
 
 La vía recomendada es el `Makefile`, que compila el binario ARM64 con el commit embebido y exige un árbol limpio:
@@ -347,9 +362,9 @@ sha256sum -c dist/SHA256SUMS
 
 ### Operación y códigos
 
-- `systemctl enable --now oci-infrastructure-monitor.timer` habilita solo el timer.
-- `systemctl start oci-infrastructure-monitor.service` fuerza una ejecución manual; el `flock` evita el solapamiento con el timer.
-- `systemctl list-timers oci-infrastructure-monitor.timer` y `journalctl -u oci-infrastructure-monitor.service` son las dos comprobaciones básicas.
+- `systemctl enable --now oci-infrastructure-monitor.timer` habilita el timer.
+- `systemctl start oci-infrastructure-monitor.service` fuerza una ejecución manual; el `flock` evita el solapamiento con el timer. Si esa ejecución cae en la hora del resumen, también lo envía.
+- `systemctl list-timers 'oci-infrastructure-monitor*'` y `journalctl -u oci-infrastructure-monitor.service` son las comprobaciones básicas.
 - Cualquier código distinto de `0` deja la unidad en `failed`; el timer vuelve a intentarlo en la siguiente ventana. `6` (concurrencia) no es un fallo de datos.
 - Un fallo de Telegram (`5`) no impide guardar el estado: la notificación queda en cola y se reintenta.
 

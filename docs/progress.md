@@ -467,6 +467,7 @@ Estas comprobaciones no pueden hacerse desde el entorno de desarrollo y las vali
 - [ ] Envío real a Telegram.
 - [ ] Recepción de un `429` real y respeto de `retry_after`.
 - [ ] Ejecución real del timer systemd (00/06/12/18 y `Persistent=true`).
+- [ ] Envío real del resumen diario desde el `run` de la hora configurada (`telegram.daily_report_hour`).
 - [ ] Comportamiento de SELinux con el binario y los directorios de estado (`bin_t`, `etc_t`, `var_lib_t`; sin AVC).
 - [ ] Permisos efectivos de `oci-monitor` sobre `config.json`, `telegram.env` y `/var/lib/oci-infrastructure-monitor`.
 - [ ] Arranque del binario `linux/arm64` en la instancia y `version`/`check` reales.
@@ -487,3 +488,14 @@ Se aplicaron las correcciones del informe de auditoría:
 - **Tests:** nuevos tests de `internal/oci`, CLI, almacenamiento y reintentos.
 
 Pendiente: la consulta real a OCI para confirmar la convención de timestamps y commitear el árbol antes de `make dist-monitor`.
+
+## Resumen diario (2026-11-08)
+
+Se añadió un resumen diario por Telegram con el saliente del mes en curso y el total del mes anterior:
+
+- Lo envía el propio `run` en la ejecución cuya hora local coincide con `telegram.daily_report_hour` (18 por defecto; `-1` lo desactiva), desde el estado recién persistido. No se añadió ningún timer ni unidad systemd: se reutiliza el de cada 6 h y `state.json` conserva el esquema v3.
+- `report` sigue disponible como envío manual y `report --dry-run` para imprimir el mensaje sin enviarlo; ambos son de solo lectura.
+- El mensaje incluye por mes el consumo en GiB y bytes, el estado del acumulado, el conteo de buckets y el estado del mes; el porcentaje del límite se muestra solo para el mes en curso. Añade `AVISO` si `state.json` está ilegible, hay fallos consecutivos, quedan notificaciones pendientes o falta un historial.
+- Sin datos en los dos meses no se envía; con `telegram.enabled=false` tampoco; un fallo de envío deja el `run` en `5` sin deshacer la recogida.
+- Verificación local: `go build`, `go vet`, `go test ./...`, `go test -race ./...` y `gofmt` en verde; tests nuevos en `internal/app` (hora del resumen, dry-run, Telegram deshabilitado, fallo de envío y sin datos) y en `cmd/monitor` (`report` y la salida `resumen_diario=`).
+- Pendiente de validación real: el `run` de la hora configurada con el timer real, la recepción del mensaje en Telegram y la lectura contra un estado de producción.

@@ -124,7 +124,7 @@ func writeRunConfig(t *testing.T, stateDir string, networkEnabled, telegramEnabl
     "collection_failure_cooldown_hours": 24,
     "collect_inbound": false
   },
-  "telegram": {"enabled": %t},
+  "telegram": {"enabled": %t, "daily_report_hour": -1},
   "storage": {"state_dir": %q},
   "logging": {"level": "info"}
 }`, testOCID("compartment", "c"), testOCID("instance", "a"), testOCID("vnic", "b"), telegramEnabled, stateDir)
@@ -132,7 +132,7 @@ func writeRunConfig(t *testing.T, stateDir string, networkEnabled, telegramEnabl
 		content = fmt.Sprintf(`{
   "oci": {"region": "us-ashburn-1"},
   "network": {"enabled": false},
-  "telegram": {"enabled": %t},
+  "telegram": {"enabled": %t, "daily_report_hour": -1},
   "storage": {"state_dir": %q},
   "logging": {"level": "info"}
 }`, telegramEnabled, stateDir)
@@ -159,7 +159,7 @@ func writeTelegramEnv(t *testing.T) string {
 func TestUsageMentionsRunAndTestTelegram(t *testing.T) {
 	var buf strings.Builder
 	usage(&buf)
-	for _, want := range []string{"run", "test-telegram", "status", "check"} {
+	for _, want := range []string{"run", "test-telegram", "status", "report", "check"} {
 		if !strings.Contains(buf.String(), want) {
 			t.Errorf("usage does not mention %q:\n%s", want, buf.String())
 		}

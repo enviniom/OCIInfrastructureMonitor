@@ -22,7 +22,8 @@
     "collect_inbound": false
   },
   "telegram": {
-    "enabled": true
+    "enabled": true,
+    "daily_report_hour": 18
   },
   "storage": {
     "state_dir": "/var/lib/oci-infrastructure-monitor"

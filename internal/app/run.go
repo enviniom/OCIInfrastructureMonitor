@@ -81,21 +81,29 @@ type Delivered struct {
 // RunReport is the outcome of one run. ExitCode is the value the command must
 // return; the categorized errors keep the priority rule visible in tests.
 type RunReport struct {
-	Now              time.Time
-	DryRun           bool
-	ExitCode         int
-	NetworkEnabled   bool
-	TelegramEnabled  bool
-	Collect          CollectReport
-	Sent             []Delivered
-	Enqueued         int
-	Collapsed        int
-	Expired          int
-	Dropped          int
-	Skipped          int
-	WouldSend        int
-	Pending          int
-	PendingKnown     bool
+	Now             time.Time
+	DryRun          bool
+	ExitCode        int
+	NetworkEnabled  bool
+	TelegramEnabled bool
+	Collect         CollectReport
+	Sent            []Delivered
+	Enqueued        int
+	Collapsed       int
+	Expired         int
+	Dropped         int
+	Skipped         int
+	WouldSend       int
+	Pending         int
+	PendingKnown    bool
+	// DailyReportDue is true when the run happened in the local hour
+	// configured for the daily report and therefore attempted it.
+	DailyReportDue bool
+	// DailyReportSent is true when Telegram accepted the daily report.
+	DailyReportSent bool
+	// DailyReportError is the delivery error of the daily report, if any. It is
+	// also copied to TelegramError for the exit code.
+	DailyReportError error
 	ConfigError      error
 	PersistenceError error
 	OCIError         error
@@ -137,7 +145,8 @@ func (r RunReport) ExitCodeFor() int {
 //     health;
 //  11. enqueue and send the new notifications, persisting the state after each
 //     successful delivery;
-//  12. persist the final state, counters and alert bookkeeping;
+//  12. persist the final state, counters and alert bookkeeping, and send the
+//     daily report when the run happens in the configured local hour;
 //  13. log the summary and release the lock (deferred).
 //
 // A dry run performs the reads and calculations but writes nothing, queues
@@ -148,6 +157,10 @@ func Run(ctx context.Context, cfg config.Config, client oci.Client, store *persi
 	if now.IsZero() {
 		now = time.Now()
 	}
+	// The daily report is due in the server's local hour. time.Now() carries
+	// time.Local, the zone the systemd timer uses, so keep the reference
+	// instant with its zone before normalizing it to UTC.
+	start := now
 	now = now.UTC()
 	logger := options.Logger
 	if logger == nil {
@@ -474,7 +487,57 @@ func Run(ctx context.Context, cfg config.Config, client oci.Client, store *persi
 		}
 	}
 
+	// Step 12b: the daily report. The run that happens in the configured local
+	// hour sends the digest from the state just persisted. It is outside the
+	// queue: a periodic publication, not an alert, and it is not retried.
+	if dailyReportDue(start, cfg.Telegram.DailyReportHour) {
+		report.DailyReportDue = true
+		switch {
+		case options.DryRun:
+			logger.Infof("simulación: se habría enviado el resumen diario de las %02d:00 (hora local)",
+				cfg.Telegram.DailyReportHour)
+		case !telegramEnabled:
+			logger.Infof("resumen diario: no se envía porque telegram.enabled=false")
+		default:
+			sent, err := sendDailyReport(workCtx, cfg, store, sender, now)
+			switch {
+			case err != nil:
+				report.DailyReportError = err
+				report.TelegramError = err
+				logger.Errorf("resumen diario: %v", err)
+			case !sent:
+				logger.Infof("resumen diario: sin datos en el historial; no se envía")
+			default:
+				report.DailyReportSent = true
+				logger.Infof("resumen diario enviado")
+			}
+		}
+	}
+
 	return finish(report, logger)
+}
+
+// dailyReportDue reports whether the run must send the daily report. The hour
+// belongs to the zone of the reference instant: time.Now() carries the server
+// zone, which is the one the systemd timer uses. A negative hour disables it.
+func dailyReportDue(start time.Time, hour int) bool {
+	return hour >= 0 && start.Hour() == hour
+}
+
+// sendDailyReport renders the digest from the state just persisted and sends
+// it. It reports whether a message was sent; false with a nil error means there
+// was no data to report.
+func sendDailyReport(ctx context.Context, cfg config.Config, store *persistence.Store, sender telegram.Sender, now time.Time) (bool, error) {
+	daily := BuildDailyReport(store, cfg, now)
+	if !daily.HasData {
+		return false, nil
+	}
+	sendCtx, cancel := deliveryContext(ctx)
+	defer cancel()
+	if err := sender.SendMessage(sendCtx, RenderDailySummary(cfg, daily)); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 type pendingAlert struct {

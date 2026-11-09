@@ -148,5 +148,5 @@ go test -race ./...
 
 sha256sum -c dist/SHA256SUMS
 file dist/oci-infrastructure-monitor-linux-*
-systemd-analyze verify systemd/oci-infrastructure-monitor.timer
+systemd-analyze verify systemd/oci-infrastructure-monitor.{service,timer}
 ```

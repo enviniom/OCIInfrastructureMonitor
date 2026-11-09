@@ -12,6 +12,10 @@ Guía de los fallos esperables de `oci-infrastructure-monitor` y cómo diagnosti
 # Estado persistido (no consulta OCI, no escribe)
 sudo -u oci-monitor oci-infrastructure-monitor status
 
+# Resumen diario: qué se enviaría y envío manual (solo lee estado)
+sudo -u oci-monitor oci-infrastructure-monitor report --dry-run
+sudo -u oci-monitor oci-infrastructure-monitor report
+
 # Simulación: lee, calcula y dice qué habría enviado, sin escribir ni enviar
 sudo -u oci-monitor oci-infrastructure-monitor run --dry-run
 
@@ -73,7 +77,7 @@ Si systemd lo marca como `failed` pero la ejecución fue correcta, revisa que `E
 | `6` | Ejecución concurrente (`flock`) | Sección 8 |
 | `1` | Reservado; no debería aparecer | Reporta el caso con el journal |
 
-Con varios errores, `run` devuelve el de mayor prioridad: `2` > `4` > `3` > `5`. Todos quedan en el journal, así que no te quedes solo con el código.
+Con varios errores, `run` devuelve el de mayor prioridad: `2` > `4` > `3` > `5`. Todos quedan en el journal, así que no te quedes solo con el código. `report` usa `2`, `4` y `5` con la prioridad `2` > `4` > `5`; no puede devolver `3` ni `6`.
 
 ## 4. Código 2: configuración
 
@@ -272,7 +276,7 @@ Checklist:
 - Un servicio `failed` no deshabilita el timer; la siguiente ventana lo vuelve a intentar.
 - Si cambiaste las unidades, `systemctl daemon-reload`.
 - Comprueba la hora del sistema (`timedatectl`); el timer usa hora local, los datos UTC.
-- `RandomizedDelaySec=15min` puede retrasar hasta 15 min; no es un fallo.
+- `RandomizedDelaySec=15min` puede retrasar hasta 15 min la ejecución; no es un fallo. Si el retraso cruza a las 19:00, ese día no se envía el resumen.
 
 Prueba inmediata:
 
@@ -331,6 +335,8 @@ Vuelve a aplicar `sudo systemctl daemon-reload` y documenta el cambio. No relaje
 - **Pérdida por cola llena o caducidad:** la cola tiene 50 entradas y 7 días. Al desbordarse o caducar se descarta la más antigua y se registra en el journal. Revisa `caducadas` y `descartadas` en el resumen.
 - **Colapso:** una alerta mensual superior sustituye a la pendiente; una igual o inferior se suprime. Al enviar el 90 % se registran 50, 75 y 90, de modo que el 75 % no se reenvía.
 - **`telegram.enabled=false`:** no se encola nada nuevo y la cola existente caduca a los 7 días; al reactivar se colapsa lo mensual y se emite una sola alerta con el nivel actual.
+- **El resumen diario no llega:** no usa la cola y solo se envía en el `run` de la hora configurada (`telegram.daily_report_hour`, 18 por defecto). Comprueba que esa ejecución ocurrió (`journalctl -u oci-infrastructure-monitor.service` y la línea `resumen_diario=`), que la hora local del servidor es la esperada (`timedatectl`) y que `report --dry-run` imprime el mensaje. Si el journal dice `sin datos en el historial`, `run` no ha recogido nada todavía; si dice `telegram.enabled=false`, el interruptor global está desactivado; si el `run` de las 18:00 no ocurrió (servidor apagado, lock ocupado), envíalo con `report`.
+- **El resumen diario se duplica:** cualquier `run` manual en la misma hora vuelve a enviarlo; no hay marca persistida de «ya enviado hoy». No es un fallo del timer, que dispara una sola vez.
 
 ## 14. Totales sospechosos
 

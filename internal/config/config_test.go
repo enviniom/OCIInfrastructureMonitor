@@ -52,8 +52,28 @@ func TestParseDefaults(t *testing.T) {
 	if cfg.Storage.StateDir != "/var/lib/oci-infrastructure-monitor" {
 		t.Errorf("state dir default = %q", cfg.Storage.StateDir)
 	}
+	if cfg.Telegram.DailyReportHour != 18 {
+		t.Errorf("daily report hour default = %d, want 18", cfg.Telegram.DailyReportHour)
+	}
 	if cfg.Logging.Level != "info" {
 		t.Errorf("logging level default = %q, want info", cfg.Logging.Level)
+	}
+}
+
+func TestDailyReportHourValidation(t *testing.T) {
+	for _, hour := range []int{-1, 0, 18, 23} {
+		cfg := validConfig()
+		cfg.Telegram.DailyReportHour = hour
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("hour %d rejected: %v", hour, err)
+		}
+	}
+	for _, hour := range []int{-2, 24} {
+		cfg := validConfig()
+		cfg.Telegram.DailyReportHour = hour
+		if err := cfg.Validate(); err == nil {
+			t.Errorf("hour %d accepted, want a validation error", hour)
+		}
 	}
 }
 

@@ -139,6 +139,107 @@ func RenderTestMessage(cfg config.Config, summary accumulate.Summary, now time.T
 	return b.String()
 }
 
+// RenderDailySummary renders the daily digest of the current and previous
+// months. It never queries OCI: the figures are the last persisted run, and the
+// header quotes the last successful query so staleness is visible. The digest
+// is deliberately compact: total, accumulator status and month lifecycle state
+// for each period, plus the limit percentage for the month in course (the
+// configured limit is not a historical value).
+func RenderDailySummary(cfg config.Config, report DailyReport) string {
+	var b strings.Builder
+	b.WriteString("OCI Infrastructure Monitor — resumen diario\n")
+	writeHeader(&b, cfg)
+	fmt.Fprintf(&b, "fecha de evaluación: %s\n", formatTimestamp(report.Now))
+	fmt.Fprintf(&b, "última consulta exitosa: %s\n", formatTimestampPtr(report.Status.State.LastSuccessfulQuery))
+	fmt.Fprintf(&b, "medición: %s\n", measurementMonthly)
+	b.WriteString("\n")
+
+	for _, entry := range []struct {
+		label   string
+		title   string
+		current bool
+	}{
+		{label: "actual", title: "mes en curso", current: true},
+		{label: "anterior", title: "mes anterior"},
+	} {
+		month, ok := monthStatusByLabel(report.Status.Months, entry.label)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&b, "%s %s\n", entry.title, month.Month)
+		writeMonthDigest(&b, cfg, month, entry.current)
+		b.WriteString("\n")
+	}
+
+	writeDigestWarnings(&b, report)
+	b.WriteString("fuente: estado persistido por el último run; este resumen no consulta OCI.\n")
+	b.WriteString(notBillableNote)
+	return b.String()
+}
+
+func writeMonthDigest(b *strings.Builder, cfg config.Config, month MonthStatus, current bool) {
+	if month.Err != nil {
+		fmt.Fprintf(b, "  estado: error de lectura (%v)\n", month.Err)
+		return
+	}
+	if !month.HasHistory {
+		b.WriteString("  sin historial\n")
+		return
+	}
+	if !month.Summary.HasData {
+		b.WriteString("  sin datos registrados\n")
+		fmt.Fprintf(b, "  estado del mes: %s\n", MonthStateLabel(month))
+		return
+	}
+
+	outbound := month.Summary.Outbound
+	if outbound.Buckets == 0 {
+		// An inbound-only month: the digest tracks outbound, so say it instead
+		// of presenting a zero that was never measured.
+		b.WriteString("  consumo saliente: sin datos registrados\n")
+	} else {
+		fmt.Fprintf(b, "  consumo saliente: %s (%s bytes)\n", formatGiB(outbound.Bytes), formatThousands(outbound.Bytes))
+		// The limit is the configured value, not a historical one: comparing a
+		// closed month against today's limit could mislead, so it is shown only
+		// for the month in course.
+		if current {
+			if limit := bytesFromGiB(cfg.Network.MonthlyLimitGiB); limit > 0 {
+				fmt.Fprintf(b, "  límite mensual: %s — consumido %s %%\n", formatGiB(limit), formatPercentage(outbound.Bytes, limit))
+			}
+		}
+	}
+	fmt.Fprintf(b, "  estado del acumulado: %s\n", accumulatedLabel(outbound))
+	fmt.Fprintf(b, "  buckets: %d (%d complete, %d provisional, %d no_data, %d incomplete)\n",
+		outbound.Buckets, outbound.Complete, outbound.Provisional, outbound.NoData, outbound.Incomplete)
+	fmt.Fprintf(b, "  estado del mes: %s\n", MonthStateLabel(month))
+}
+
+func writeDigestWarnings(b *strings.Builder, report DailyReport) {
+	var warnings []string
+	if report.Status.StateErr != nil {
+		warnings = append(warnings, fmt.Sprintf("no se pudo leer state.json: %v", report.Status.StateErr))
+	}
+	if failures := report.Status.State.ConsecutiveFailures; failures > 0 {
+		warnings = append(warnings, fmt.Sprintf("%d fallos consecutivos de recopilación; el acumulado puede estar incompleto", failures))
+	}
+	if pending := len(report.Status.State.Pending); pending > 0 {
+		warnings = append(warnings, fmt.Sprintf("notificaciones pendientes de envío: %d", pending))
+	}
+	for _, month := range report.Status.Months {
+		if month.Err != nil {
+			warnings = append(warnings, fmt.Sprintf("no se pudo leer el historial de %s: %v", month.Month, month.Err))
+		}
+	}
+	if len(warnings) == 0 {
+		return
+	}
+	b.WriteString("avisos:\n")
+	for _, warning := range warnings {
+		fmt.Fprintf(b, "  AVISO: %s\n", warning)
+	}
+	b.WriteString("\n")
+}
+
 // MonthStateLabel describes the lifecycle state of a month in Spanish. status
 // and the daily digest share it so both read the same.
 func MonthStateLabel(month MonthStatus) string {
@@ -191,6 +292,15 @@ func accumulatedLabel(direction accumulate.DirectionSummary) string {
 	default:
 		return string(direction.Status)
 	}
+}
+
+func monthStatusByLabel(months []MonthStatus, label string) (MonthStatus, bool) {
+	for _, month := range months {
+		if month.Label == label {
+			return month, true
+		}
+	}
+	return MonthStatus{}, false
 }
 
 // RenderPending returns the stored text of a queued notification. A version 2
@@ -387,6 +497,13 @@ func formatTimestamp(t time.Time) string {
 		return "no disponible"
 	}
 	return t.UTC().Format("2006-01-02 15:04:05 UTC")
+}
+
+func formatTimestampPtr(t *time.Time) string {
+	if t == nil {
+		return "no disponible"
+	}
+	return formatTimestamp(*t)
 }
 
 func formatRange(since, last time.Time) string {

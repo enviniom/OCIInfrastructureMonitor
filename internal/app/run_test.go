@@ -79,6 +79,9 @@ func runConfig(t *testing.T) config.Config {
 	cfg.Network.MonthlyLimitGiB = 100
 	cfg.Network.HighTraffic6HGiB = 1000
 	cfg.Telegram.Enabled = true
+	// The daily report is exercised by its own tests; keep the rest independent
+	// from the hour of the reference instant.
+	cfg.Telegram.DailyReportHour = -1
 	return cfg
 }
 

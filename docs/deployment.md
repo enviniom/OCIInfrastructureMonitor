@@ -256,7 +256,7 @@ Cambia como mínimo:
 - `network.monthly_limit_gib` y `network.high_traffic_6h_gib` según tu plan;
 - `network.alert_percentages` si quieres otros cuatro niveles (deben ser cuatro, crecientes y el último `100`).
 
-Mantén `storage.state_dir` en `/var/lib/oci-infrastructure-monitor` y `logging.level` en `info` salvo que estés diagnosticando.
+Mantén `storage.state_dir` en `/var/lib/oci-infrastructure-monitor` y `logging.level` en `info` salvo que estés diagnosticando. `telegram.daily_report_hour` vale `18` por defecto: es la hora local del `run` que envía el resumen diario; usa `-1` para desactivarlo.
 
 Valida el JSON y los permisos (si no hay `python3`, instálalo con `sudo dnf install -y python3`):
 
@@ -332,6 +332,8 @@ Propiedades que conviene entender:
 | `NoNewPrivileges`, `PrivateTmp`, `PrivateDevices`, `ProtectHome` | — | Endurecimiento estándar |
 | `SystemCallFilter=@system-service` | — | Conjunto de syscalls de servicio |
 | Ausencia de `PrivateNetwork`/`IPAddressDeny` | — | No se bloquea `169.254.169.254`, OCI ni Telegram |
+
+El `run` de las 18:00 envía además el resumen diario; no hay una unidad aparte para él.
 
 ### 2.9 SELinux
 
@@ -422,6 +424,11 @@ sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor run
 
 # 6. Estado persistido
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor status
+
+# 7. Resumen diario: verlo en seco y enviarlo a mano
+#    (el run de las 18:00 lo envía solo; report sirve para probarlo o reenviarlo)
+sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor report --dry-run
+sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor report
 ```
 
 Comprueba los archivos y permisos:
@@ -462,7 +469,7 @@ Ese OCID debe cumplir la regla del Dynamic Group. La pertenencia no se deduce de
 
 ```bash
 sudo systemctl enable --now oci-infrastructure-monitor.timer
-systemctl list-timers oci-infrastructure-monitor.timer
+systemctl list-timers 'oci-infrastructure-monitor*'
 systemctl status oci-infrastructure-monitor.timer --no-pager
 ```
 
@@ -472,7 +479,7 @@ Comprueba la expresión y el próximo disparo:
 systemd-analyze calendar '*-*-* 00/6:00:00'
 ```
 
-El timer dispara a las 00:00, 06:00, 12:00 y 18:00 (hora local del servidor; los buckets se guardan en UTC), con hasta 15 min de retardo aleatorio. `Persistent=true` recupera la ejecución si el servidor estaba apagado.
+El timer dispara a las 00:00, 06:00, 12:00 y 18:00 (hora local del servidor; los buckets se guardan en UTC), con hasta 15 min de retardo aleatorio. El `run` de las 18:00 envía además el resumen diario; no hay un timer aparte. `Persistent=true` recupera la ejecución si el servidor estaba apagado.
 
 ### 4.2 Ejecución manual
 
@@ -533,6 +540,7 @@ sudo restorecon -v /usr/local/bin/oci-infrastructure-monitor
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor check
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor run --dry-run
 sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor status
+sudo -u oci-monitor /usr/local/bin/oci-infrastructure-monitor report --dry-run
 
 # 5. Reactiva el timer
 sudo systemctl start oci-infrastructure-monitor.timer
@@ -606,9 +614,12 @@ sudo groupdel oci-monitor
 - [ ] `version` muestra el commit esperado y `vcs.modified=false`.
 - [ ] `check` devuelve `0` y la VNIC es visible (o el warning está justificado).
 - [ ] `test-telegram` llega al chat correcto.
-- [ ] `run --dry-run` no escribe estado ni envía.
+- [ ] `run --dry-run` no escribe estado ni envía; en la hora del resumen indica que lo habría enviado.
 - [ ] `run` real sale `0`; `status` muestra el mes y los buckets.
+- [ ] `report --dry-run` imprime el resumen con el mes en curso y el anterior.
+- [ ] `report` real llega al chat (o se omite a propósito si no hay datos).
 - [ ] `state.json`, `lock` e `history/*.json` son `0600`.
-- [ ] El timer está activo y `systemctl list-timers` muestra la próxima ejecución.
+- [ ] El timer está activo y `systemctl list-timers 'oci-infrastructure-monitor*'` muestra la próxima ejecución.
+- [ ] Tras el `run` de las 18:00, el journal muestra `resumen diario enviado` (o `sin datos`).
 - [ ] `journalctl -u oci-infrastructure-monitor.service` no muestra el token.
 - [ ] El Dynamic Group y la política restrictiva están verificados (ver [`oci-permissions.md`](oci-permissions.md)).

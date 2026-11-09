@@ -7,6 +7,7 @@ func TestExecuteRejectsExtraArgs(t *testing.T) {
 		{"run", "x"},
 		{"check", "x"},
 		{"status", "x"},
+		{"report", "x"},
 		{"test-telegram", "x"},
 		{"version", "x"},
 		{"help", "x"},
@@ -26,6 +27,7 @@ func TestExecuteHelpExitsZero(t *testing.T) {
 		{"run", "--help"},
 		{"check", "--help"},
 		{"status", "--help"},
+		{"report", "--help"},
 		{"test-telegram", "--help"},
 	}
 	for _, args := range cases {
