@@ -111,6 +111,8 @@ README.md y *.md   (opcional)
 
 No subas `state.json`, `history/` ni el resto de `dist/`. El binario es autocontenido.
 
+En el servidor, después de cargar los archivos, el paso 2.3 aplica `sudo restorecon -Rv /home/opc/deploys` para normalizar los contextos SELinux de la carpeta de carga.
+
 ---
 
 ## Parte 2 — En el servidor: instalar
@@ -176,6 +178,14 @@ sha256sum -c SHA256SUMS
 ```
 
 Si la suma no coincide, no instales nada: vuelve a subir el binario.
+
+Si SELinux está en `Enforcing` (o `Permissive`), normaliza los contextos de la carpeta de carga antes de instalar:
+
+```bash
+sudo restorecon -Rv /home/opc/deploys
+```
+
+Después, al instalar el binario en `/usr/local/bin`, se vuelve a aplicar `restorecon` en el destino (paso 2.4).
 
 Los comandos siguientes usan `/home/opc/deploys` como origen. No se crean carpetas temporales: `install` copia directamente a los destinos. Si abres otra shell, vuelve a entrar en `/home/opc/deploys` o usa rutas absolutas.
 
@@ -581,6 +591,7 @@ sudo groupdel oci-monitor
 - [ ] `config.json` es `0640 root:oci-monitor` y tiene OCIDs reales.
 - [ ] `telegram.env` es `0600 oci-monitor:oci-monitor` y la app puede leerlo.
 - [ ] `systemd-analyze verify` no reporta errores en las dos unidades.
+- [ ] `restorecon` aplicado a `/home/opc/deploys` tras la carga y a `/usr/local/bin/oci-infrastructure-monitor` tras la instalación.
 - [ ] Contextos SELinux: `bin_t`, `etc_t`, `var_lib_t`; sin AVC recientes.
 
 ### Verificación
